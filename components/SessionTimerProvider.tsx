@@ -3,6 +3,9 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 
+const MAX_ALLOWED_SECONDS = 200000 * 86400; // 200,000 days ceiling to prevent bigint overflow
+const MAX_ALLOWED_MS = MAX_ALLOWED_SECONDS * 1000;
+
 const SessionContext = createContext<{ 
   accumulatedMs: number; 
   pendingBalanceCents: number; 
@@ -11,6 +14,7 @@ const SessionContext = createContext<{
   claimPendingBalance: () => Promise<boolean>;
   resetSession: () => Promise<void>;
   addSessionDays: (days: number) => Promise<boolean>;
+  addSessionTime: (days: number, hours: number, minutes: number, seconds: number) => Promise<boolean>;
 }>({ 
   accumulatedMs: 0, 
   pendingBalanceCents: 0, 
@@ -18,7 +22,8 @@ const SessionContext = createContext<{
   totalDays: 0,
   claimPendingBalance: async () => false,
   resetSession: async () => {},
-  addSessionDays: async () => false
+  addSessionDays: async () => false,
+  addSessionTime: async () => false
 });
 
 export function useSessionTimer() {
@@ -48,11 +53,16 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
   const isApprovedRef = useRef<boolean>(false);
   const isSessionActiveRef = useRef<boolean>(false);
 
+  // Wall-clock tracking refs to prevent background tab throttling drift/resets
+  const baseMsRef = useRef<number>(0);
+  const localAnchorTimeRef = useRef<number>(Date.now());
+
   const clearSessionState = useCallback(() => {
     usernameRef.current = "";
     sessionTokenRef.current = "";
     isApprovedRef.current = false;
     isSessionActiveRef.current = false;
+    baseMsRef.current = 0;
     setAccumulatedMs(0);
     setPendingClaimedCents(0);
   }, []);
@@ -63,6 +73,8 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
       await supabase.rpc("reset_user_session_time", {
         target_username: usernameRef.current,
       });
+      baseMsRef.current = 0;
+      localAnchorTimeRef.current = Date.now();
       setAccumulatedMs(0);
       setPendingClaimedCents(0);
     } catch (err) {
@@ -73,18 +85,51 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
   const addSessionDays = useCallback(async (days: number): Promise<boolean> => {
     if (!usernameRef.current || days <= 0) return false;
     try {
-      const { data: newSeconds, error } = await supabase.rpc("admin_add_session_days", {
+      const { data: newSeconds, error } = await supabase.rpc("admin_add_session_time", {
         target_username: usernameRef.current,
         days_to_add: days,
+        hours_to_add: 0,
+        minutes_to_add: 0,
+        seconds_to_add: 0,
       });
 
-      if (!error && typeof newSeconds === "number") {
-        setAccumulatedMs(newSeconds * 1000);
+      const numericSeconds = Number(newSeconds);
+      if (!error && !isNaN(numericSeconds)) {
+        const clampedSeconds = Math.min(numericSeconds, MAX_ALLOWED_SECONDS);
+        baseMsRef.current = clampedSeconds * 1000;
+        localAnchorTimeRef.current = Date.now();
+        setAccumulatedMs(baseMsRef.current);
         return true;
       }
       return false;
     } catch (err) {
       console.error("Failed to add session days:", err);
+      return false;
+    }
+  }, [supabase]);
+
+  const addSessionTime = useCallback(async (days: number, hours: number, minutes: number, seconds: number): Promise<boolean> => {
+    if (!usernameRef.current) return false;
+    try {
+      const { data: newSeconds, error } = await supabase.rpc("admin_add_session_time", {
+        target_username: usernameRef.current,
+        days_to_add: days,
+        hours_to_add: hours,
+        minutes_to_add: minutes,
+        seconds_to_add: seconds,
+      });
+
+      const numericSeconds = Number(newSeconds);
+      if (!error && !isNaN(numericSeconds)) {
+        const clampedSeconds = Math.min(numericSeconds, MAX_ALLOWED_SECONDS);
+        baseMsRef.current = clampedSeconds * 1000;
+        localAnchorTimeRef.current = Date.now();
+        setAccumulatedMs(baseMsRef.current);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error("Failed to add session time:", err);
       return false;
     }
   }, [supabase]);
@@ -114,7 +159,8 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
         p_client_seconds: clientSeconds,
       });
 
-      if (!error && typeof newBalance === "number") {
+      const numericBalance = Number(newBalance);
+      if (!error && !isNaN(numericBalance)) {
         const { data: profile } = await supabase
           .from("profiles")
           .select("pending_claimed_cents, accumulated_session_seconds")
@@ -123,11 +169,12 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
         
         if (profile) {
           setPendingClaimedCents(profile.pending_claimed_cents ?? 0);
-          if (typeof profile.accumulated_session_seconds === "number") {
-            setAccumulatedMs((prevMs) => {
-              const currentRemainder = prevMs % 1000;
-              return (profile.accumulated_session_seconds * 1000) + currentRemainder;
-            });
+          if (profile.accumulated_session_seconds !== null && profile.accumulated_session_seconds !== undefined) {
+            const profileSeconds = Number(profile.accumulated_session_seconds);
+            const clampedSeconds = Math.min(profileSeconds, MAX_ALLOWED_SECONDS);
+            baseMsRef.current = clampedSeconds * 1000;
+            localAnchorTimeRef.current = Date.now();
+            setAccumulatedMs(baseMsRef.current);
           }
         }
         return true;
@@ -143,7 +190,7 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
     }
   }, [supabase, accumulatedMs]);
 
-  // Non-expiring heartbeat: syncs time with server without ever forcing logouts or timeouts
+  // Non-expiring heartbeat: syncs time with server and updates the absolute anchor baseline
   const sendHeartbeat = useCallback(async () => {
     if (!usernameRef.current || !sessionTokenRef.current || !isApprovedRef.current) return;
     try {
@@ -154,11 +201,10 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
 
       const numericSeconds = Number(serverSeconds);
       if (!error && !isNaN(numericSeconds) && numericSeconds >= 0 && isSessionActiveRef.current) {
-        setAccumulatedMs((prev) => {
-          if (prev === 0 && numericSeconds > 10) return prev; 
-          const remainder = prev % 1000;
-          return (numericSeconds * 1000) + remainder;
-        });
+        const clampedSeconds = Math.min(numericSeconds, MAX_ALLOWED_SECONDS);
+        baseMsRef.current = clampedSeconds * 1000;
+        localAnchorTimeRef.current = Date.now();
+        setAccumulatedMs(baseMsRef.current);
       }
     } catch (err) {
       console.error("Session heartbeat sync failed:", err);
@@ -182,6 +228,8 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
         (payload) => {
           const updated = payload.new as any;
           if (updated && updated.accumulated_session_seconds === 0 && updated.balance_cents === 0) {
+            baseMsRef.current = 0;
+            localAnchorTimeRef.current = Date.now();
             setAccumulatedMs(0);
             setPendingClaimedCents(0);
             window.location.reload();
@@ -232,10 +280,10 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
         return;
       }
 
-      let currentActiveToken = sessionStorage.getItem("lambert_active_token");
+      let currentActiveToken = sessionStorage.getItem("socialtime_active_token");
       if (!currentActiveToken) {
         currentActiveToken = `token_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-        sessionStorage.setItem("lambert_active_token", currentActiveToken);
+        sessionStorage.setItem("socialtime_active_token", currentActiveToken);
       }
 
       sessionTokenRef.current = currentActiveToken;
@@ -253,14 +301,16 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
 
       if (!isMounted) return;
 
-      const dbSeconds = profileRes.data?.accumulated_session_seconds ?? 0;
-      const rpcSeconds = typeof startRes.data === "number" ? startRes.data : 0;
-      const resolvedSeconds = Math.max(dbSeconds, rpcSeconds);
+      const dbSeconds = Number(profileRes.data?.accumulated_session_seconds ?? 0);
+      const rpcSeconds = Number(startRes.data ?? 0);
+      const resolvedSeconds = Math.min(Math.max(isNaN(dbSeconds) ? 0 : dbSeconds, isNaN(rpcSeconds) ? 0 : rpcSeconds), MAX_ALLOWED_SECONDS);
 
-      setAccumulatedMs(resolvedSeconds * 1000);
+      baseMsRef.current = resolvedSeconds * 1000;
+      localAnchorTimeRef.current = Date.now();
+      setAccumulatedMs(baseMsRef.current);
 
-      if (profileRes.data && typeof profileRes.data.pending_claimed_cents === "number") {
-        setPendingClaimedCents(profileRes.data.pending_claimed_cents);
+      if (profileRes.data && profileRes.data.pending_claimed_cents !== null) {
+        setPendingClaimedCents(Number(profileRes.data.pending_claimed_cents));
       }
     }
 
@@ -280,16 +330,29 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
     };
   }, [supabase, clearSessionState]);
 
-  // Continuous local earning tick: accumulates time and money every 100ms as long as the tab is open
+  // Throttle-proof wall-clock ticker: calculates true absolute elapsed time against Date.now() anchor and enforces ceiling
   useEffect(() => {
     const uiTickInterval = setInterval(() => {
       if (isApprovedRef.current && usernameRef.current) {
-        setAccumulatedMs((prev) => prev + 100);
+        const elapsedSinceAnchor = Date.now() - localAnchorTimeRef.current;
+        const totalCalcMs = baseMsRef.current + elapsedSinceAnchor;
+        setAccumulatedMs(Math.min(totalCalcMs, MAX_ALLOWED_MS));
       }
     }, 100);
 
-    return () => clearInterval(uiTickInterval);
-  }, []);
+    // Instant resync when user navigates back to the tab after background throttling
+    const handleVisibilityChange = () => {
+      if (!document.hidden && isApprovedRef.current && usernameRef.current) {
+        sendHeartbeat();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      clearInterval(uiTickInterval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [sendHeartbeat]);
 
   // Periodic server sync heartbeat every 30 seconds
   useEffect(() => {
@@ -303,7 +366,7 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
   }, [sendHeartbeat]);
 
   return (
-    <SessionContext.Provider value={{ accumulatedMs, pendingBalanceCents, multiplier, totalDays, claimPendingBalance, resetSession, addSessionDays }}>
+    <SessionContext.Provider value={{ accumulatedMs, pendingBalanceCents, multiplier, totalDays, claimPendingBalance, resetSession, addSessionDays, addSessionTime }}>
       {children}
     </SessionContext.Provider>
   );

@@ -14,8 +14,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Lambert Bank",
-  description: "Secure financial ledger and encrypted community platform",
+  title: "Social Time",
+  description: "Time well spent, together.",
+  icons: {
+    icon: "/favicon.ico?v=2",
+  },
 };
 
 export const viewport: Viewport = {

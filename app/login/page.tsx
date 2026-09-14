@@ -250,23 +250,18 @@ const RESERVED_USERNAMES = [
   "system",
   "support",
   "bank",
-  "lambertbank",
-  "lambertsocial",
+  "socialtime",
   "social",
   "davidlambert",
   "lambert1992",
   "lambert",
   "administrator",
-  "lambertadministrator",
-  "lambertadmin",
-  "bankadmin",
+  "socialtimeadmin",
+  "superadmin",
   "superuser",
   "root",
-  "officiallambert",
-  "lambertbankadmin",
-  "socialbank",
-  "banksupport",
-  "banksystem"
+  "officialsocial",
+  "socialtimesupport"
 ];
 
 export default function LoginPage() {
@@ -613,7 +608,7 @@ export default function LoginPage() {
         }
 
         // FIX: Use sessionStorage to match SessionTimerProvider isolation rules
-        sessionStorage.setItem("lambert_active_token", newSessionId);
+        sessionStorage.setItem("socialtime_active_token", newSessionId);
 
         router.push("/");
         router.refresh();
@@ -633,8 +628,8 @@ export default function LoginPage() {
             </div>
 
             <div className="space-y-2">
-              <h1 className="text-2xl font-black text-gray-900 tracking-wider uppercase">Lambert Bank</h1>
-              <p className="text-xs text-gray-500 font-medium">Secure financial ledger and encrypted community platform.</p>
+              <h1 className="text-2xl font-black text-gray-900 tracking-wider uppercase">Social Time</h1>
+              <p className="text-xs text-gray-500 font-medium">Time well spent, together.</p>
             </div>
 
             <div className="space-y-4 pt-4">
@@ -661,7 +656,7 @@ export default function LoginPage() {
           <>
             <div className="flex items-center justify-between border-b border-gray-100 pb-4">
               <div>
-                <h1 className="text-lg font-black text-gray-900 tracking-wider">LAMBERT BANK</h1>
+                <h1 className="text-lg font-black text-gray-900 tracking-wider">SOCIAL TIME</h1>
                 <p className="text-[11px] text-gray-500 uppercase font-semibold mt-0.5">
                   {view === "SIGNUP" ? "New Account Application" : "Secure Client Portal Login"}
                 </p>

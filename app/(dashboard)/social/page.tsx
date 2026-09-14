@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import { useRouter } from "next/navigation";
-import Navbar from "@/components/Navbar";
 
 interface Message {
   id: string;
@@ -205,8 +204,8 @@ export default function ChatHubPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#f3f4f6] flex items-center justify-center">
-        <p className="text-sm font-semibold text-gray-500">Loading Lambert Social...</p>
+      <div className="py-20 text-center text-xs font-semibold text-gray-500">
+        Loading Lambert Social...
       </div>
     );
   }
@@ -214,133 +213,127 @@ export default function ChatHubPage() {
   const currentFeeFormatted = currentRoom ? `$${(currentRoom.fee_cents / 100).toFixed(2)}` : "$0.00";
 
   return (
-    <div className="min-h-screen bg-[#f3f4f6] text-[#222222] font-sans antialiased">
-      <Navbar currentUsername={currentUsername} />
-
-      <main className="max-w-5xl mx-auto p-4 sm:p-6 space-y-6">
-        
-        {!isApproved && (
-          <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex items-center justify-between shadow-xs print:hidden">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center font-bold text-base">
-                ⏳
-              </div>
-              <div>
-                <h3 className="text-xs font-bold text-amber-900 uppercase tracking-wide">Account Pending Approval</h3>
-                <p className="text-[11px] text-amber-700">You can view chat room history, but messaging is locked until KingDavid approves your account.</p>
-              </div>
+    <div className="space-y-6">
+      {!isApproved && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex items-center justify-between shadow-xs print:hidden">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center font-bold text-base">
+              ⏳
+            </div>
+            <div>
+              <h3 className="text-xs font-bold text-amber-900 uppercase tracking-wide">Account Pending Approval</h3>
+              <p className="text-[11px] text-amber-700">You can view chat room history, but messaging is locked until KingDavid approves your account.</p>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pb-6">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 space-y-3 h-fit">
-            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Social Rooms</h2>
-            <div className="space-y-1">
-              {rooms.map((room) => {
-                const feeLabel = `$${(room.fee_cents / 100).toFixed(2)}`;
-                return (
-                  <button
-                    key={room.id}
-                    onClick={() => setCurrentRoom(room)}
-                    className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center justify-between ${
-                      currentRoom?.id === room.id
-                        ? "bg-blue-600 text-white shadow-sm"
-                        : "bg-gray-50 hover:bg-gray-100 text-gray-700"
-                    }`}
-                  >
-                    <span>{room.name}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${currentRoom?.id === room.id ? "bg-blue-700 text-white" : "bg-gray-200 text-gray-600"}`}>
-                      {feeLabel}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 md:col-span-3 flex flex-col overflow-hidden">
-            <div className="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                <h3 className="text-sm font-bold text-gray-900">{currentRoom?.name}</h3>
-                <span className="text-[10px] text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                  ● Live Feed ({currentFeeFormatted}/msg fee)
-                </span>
-              </div>
-
-              {username === "KingDavid" && currentRoom && (
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pb-6">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 space-y-3 h-fit">
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Social Rooms</h2>
+          <div className="space-y-1">
+            {rooms.map((room) => {
+              const feeLabel = `$${(room.fee_cents / 100).toFixed(2)}`;
+              return (
                 <button
-                  type="button"
-                  onClick={handleClearRoomChat}
-                  className="text-[11px] bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold px-2.5 py-1 rounded border border-rose-200 transition cursor-pointer"
-                  title="Purge all messages in this room"
+                  key={room.id}
+                  onClick={() => setCurrentRoom(room)}
+                  className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center justify-between ${
+                    currentRoom?.id === room.id
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "bg-gray-50 hover:bg-gray-100 text-gray-700"
+                  }`}
                 >
-                  🗑️ Clear Room Chat
+                  <span>{room.name}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${currentRoom?.id === room.id ? "bg-blue-700 text-white" : "bg-gray-200 text-gray-600"}`}>
+                    {feeLabel}
+                  </span>
                 </button>
-              )}
-            </div>
-
-            <div className="flex-1 p-4 overflow-y-auto space-y-3 max-h-[60vh]">
-              {messages.length === 0 ? (
-                <p className="text-center text-xs text-gray-400 py-10">No messages yet. Say hello to start the conversation!</p>
-              ) : (
-                messages.map((msg) => {
-                  const isMe = msg.sender_username === username;
-                  return (
-                    <div key={msg.id} className={`flex flex-col group ${isMe ? "items-end" : "items-start"}`}>
-                      <div className="flex items-center space-x-2 px-1 mb-0.5">
-                        <span className="text-[10px] font-bold text-gray-500">{msg.sender_username}</span>
-                        {username === "KingDavid" && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteMessage(msg.id)}
-                            className="text-[10px] text-rose-500 hover:text-rose-700 font-bold opacity-0 group-hover:opacity-100 transition cursor-pointer"
-                            title="Delete message"
-                          >
-                            [Delete]
-                          </button>
-                        )}
-                      </div>
-                      <div className={`p-3 rounded-2xl text-xs max-w-md ${isMe ? "bg-blue-600 text-white rounded-br-xs" : "bg-gray-100 text-gray-900 rounded-bl-xs"}`}>
-                        {msg.content}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            <form onSubmit={handleSendMessage} className="p-3 border-t border-gray-200 bg-gray-50 flex gap-2">
-              {isApproved ? (
-                <>
-                  <input
-                    type="text"
-                    value={inputMessage}
-                    onChange={(e) => setInputMessage(e.target.value)}
-                    placeholder={`Type an encrypted message (${currentFeeFormatted} fee)...`}
-                    className="flex-1 border border-gray-300 bg-white rounded-lg px-3 py-2 text-xs text-black focus:outline-none focus:border-blue-600"
-                  />
-                  <button
-                    type="submit"
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-5 py-2 rounded-lg shadow transition cursor-pointer"
-                  >
-                    Send ({currentFeeFormatted})
-                  </button>
-                </>
-              ) : (
-                <input
-                  type="text"
-                  disabled
-                  placeholder="Messaging locked: Account pending administrator approval..."
-                  className="flex-1 border border-gray-200 bg-gray-100 rounded-lg px-3 py-2 text-xs text-gray-400 cursor-not-allowed"
-                />
-              )}
-            </form>
+              );
+            })}
           </div>
         </div>
 
-      </main>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 md:col-span-3 flex flex-col overflow-hidden">
+          <div className="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <h3 className="text-sm font-bold text-gray-900">{currentRoom?.name}</h3>
+              <span className="text-[10px] text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                ● Live Feed ({currentFeeFormatted}/msg fee)
+              </span>
+            </div>
+
+            {username === "KingDavid" && currentRoom && (
+              <button
+                type="button"
+                onClick={handleClearRoomChat}
+                className="text-[11px] bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold px-2.5 py-1 rounded border border-rose-200 transition cursor-pointer"
+                title="Purge all messages in this room"
+              >
+                🗑️ Clear Room Chat
+              </button>
+            )}
+          </div>
+
+          <div className="flex-1 p-4 overflow-y-auto space-y-3 max-h-[60vh]">
+            {messages.length === 0 ? (
+              <p className="text-center text-xs text-gray-400 py-10">No messages yet. Say hello to start the conversation!</p>
+            ) : (
+              messages.map((msg) => {
+                const isMe = msg.sender_username === username;
+                return (
+                  <div key={msg.id} className={`flex flex-col group ${isMe ? "items-end" : "items-start"}`}>
+                    <div className="flex items-center space-x-2 px-1 mb-0.5">
+                      <span className="text-[10px] font-bold text-gray-500">{msg.sender_username}</span>
+                      {username === "KingDavid" && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteMessage(msg.id)}
+                          className="text-[10px] text-rose-500 hover:text-rose-700 font-bold opacity-0 group-hover:opacity-100 transition cursor-pointer"
+                          title="Delete message"
+                        >
+                          [Delete]
+                        </button>
+                      )}
+                    </div>
+                    <div className={`p-3 rounded-2xl text-xs max-w-md ${isMe ? "bg-blue-600 text-white rounded-br-xs" : "bg-gray-100 text-gray-900 rounded-bl-xs"}`}>
+                      {msg.content}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          <form onSubmit={handleSendMessage} className="p-3 border-t border-gray-200 bg-gray-50 flex gap-2">
+            {isApproved ? (
+              <>
+                <input
+                  type="text"
+                  value={inputMessage}
+                  onChange={(e) => setInputMessage(e.target.value)}
+                  placeholder={`Type an encrypted message (${currentFeeFormatted} fee)...`}
+                  className="flex-1 border border-gray-300 bg-white rounded-lg px-3 py-2 text-xs text-black focus:outline-none focus:border-blue-600"
+                />
+                <button
+                  type="submit"
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-5 py-2 rounded-lg shadow transition cursor-pointer"
+                >
+                  Send ({currentFeeFormatted})
+                </button>
+              </>
+            ) : (
+              <input
+                type="text"
+                disabled
+                placeholder="Messaging locked: Account pending administrator approval..."
+                className="flex-1 border border-gray-200 bg-gray-100 rounded-lg px-3 py-2 text-xs text-gray-400 cursor-not-allowed"
+              />
+            )}
+          </form>
+        </div>
+      </div>
     </div>
   );
 }
