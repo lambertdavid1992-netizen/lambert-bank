@@ -44,8 +44,14 @@ export default function MessagesPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState<string>("");
   const [showEmojiPicker, setShowEmojiPicker] = useState<boolean>(false);
+
+  // Modal state for wiping chat history
+  const [showWipeModal, setShowWipeModal] = useState<boolean>(false);
+  const [wipeTargetUser, setWipeTargetUser] = useState<string>("");
   
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  const isKingDavid = currentUsername.toLowerCase() === "kingdavid";
 
   // Initialize user and conversation threads with unread counts
   const loadConversations = useCallback(async (username: string, approved: boolean) => {
@@ -101,14 +107,24 @@ export default function MessagesPage() {
             ...p,
             unreadCount: unreadMap[p.username] || 0,
           }));
-          setConversations(profilesWithUnread);
+
+          setConversations((prev) => {
+            const existingMap = new Map(prev.map((c) => [c.username.toLowerCase(), c]));
+            profilesWithUnread.forEach((p) => {
+              existingMap.set(p.username.toLowerCase(), {
+                ...p,
+                unreadCount: p.unreadCount ?? (existingMap.get(p.username.toLowerCase())?.unreadCount || 0),
+              });
+            });
+            return Array.from(existingMap.values());
+          });
 
           if (!selectedFriend && window.innerWidth >= 768 && profilesWithUnread.length > 0) {
             setSelectedFriend(profilesWithUnread[0].username);
           }
         }
       } else {
-        setConversations([{ username: "KingDavid", unreadCount: 0 }]);
+        setConversations((prev) => (prev.length > 0 ? prev : [{ username: "KingDavid", unreadCount: 0 }]));
         if (!selectedFriend && window.innerWidth >= 768) {
           setSelectedFriend("KingDavid");
         }
@@ -211,7 +227,6 @@ export default function MessagesPage() {
     if (!error && data) {
       setMessages(data);
 
-      // Mark unread messages from this user as read
       await supabase
         .from("messages")
         .update({ is_read: true })
@@ -219,7 +234,6 @@ export default function MessagesPage() {
         .eq("recipient_username", currentUsername)
         .eq("is_read", false);
 
-      // Clear unread badge locally immediately
       setConversations((prev) =>
         prev.map((c) => (c.username.toLowerCase() === targetUser.toLowerCase() ? { ...c, unreadCount: 0 } : c))
       );
@@ -232,7 +246,7 @@ export default function MessagesPage() {
     }
   }, [selectedFriend, fetchMessages]);
 
-  // Realtime subscription for incoming messages, read updates, and reactions
+  // Realtime subscription
   useEffect(() => {
     if (!currentUsername) return;
 
@@ -332,6 +346,53 @@ export default function MessagesPage() {
     }
   };
 
+  // Helper when clicking any member from search or conversation list
+  const handleSelectMember = (member: MemberProfile) => {
+    setSelectedFriend(member.username);
+    setSearchQuery(""); // Clear search field
+
+    setConversations((prev) => {
+      if (prev.some((c) => c.username.toLowerCase() === member.username.toLowerCase())) {
+        return prev;
+      }
+      return [member, ...prev];
+    });
+  };
+
+  // Open confirmation modal for wiping chat history
+  const handleWipeChatHistoryClick = (targetUser: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setWipeTargetUser(targetUser);
+    setShowWipeModal(true);
+  };
+
+  // Execute wipe history after confirmation modal "Yes"
+  const handleConfirmWipe = async () => {
+    if (!wipeTargetUser) return;
+    setShowWipeModal(false);
+
+    const { error } = await supabase
+      .from("messages")
+      .delete()
+      .or(
+        `and(sender_username.eq.${currentUsername},recipient_username.eq.${wipeTargetUser}),and(sender_username.eq.${wipeTargetUser},recipient_username.eq.${currentUsername})`
+      );
+
+    if (error) {
+      console.error("Failed to wipe chat history:", error);
+      alert("Failed to wipe chat history.");
+      return;
+    }
+
+    if (selectedFriend?.toLowerCase() === wipeTargetUser.toLowerCase()) {
+      setMessages([]);
+      setSelectedFriend(null);
+    }
+
+    setConversations((prev) => prev.filter((c) => c.username.toLowerCase() !== wipeTargetUser.toLowerCase()));
+    setWipeTargetUser("");
+  };
+
   if (loading) {
     return <div className="py-20 text-center text-xs font-semibold text-gray-500">Loading Messages...</div>;
   }
@@ -385,10 +446,18 @@ export default function MessagesPage() {
             <div className="p-6 text-center text-xs text-gray-500">No conversations found.</div>
           ) : (
             displayList.map((member) => (
-              <button
+              <div
                 key={member.username}
-                onClick={() => setSelectedFriend(member.username)}
-                className={`w-full p-3.5 flex items-center justify-between text-left transition cursor-pointer ${
+                role="button"
+                tabIndex={0}
+                onClick={() => handleSelectMember(member)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleSelectMember(member);
+                  }
+                }}
+                className={`w-full p-3.5 flex items-center justify-between text-left transition cursor-pointer group/item ${
                   selectedFriend === member.username ? "bg-amber-50/80 border-l-4 border-[#e7b833]" : "hover:bg-gray-100/60"
                 }`}
               >
@@ -410,37 +479,53 @@ export default function MessagesPage() {
                   </div>
                 </div>
 
-                {/* Unread Message Notification Badge */}
-                {Boolean(member.unreadCount && member.unreadCount > 0) && (
-                  <span className="w-4 h-4 bg-rose-600 text-white rounded-full text-[9px] font-bold flex items-center justify-center shrink-0 shadow-xs ml-2 animate-pulse">
-                    {member.unreadCount}
-                  </span>
-                )}
-              </button>
+                <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                  {/* Administrator Wipe Chat Button */}
+                  {isKingDavid && (
+                    <button
+                      type="button"
+                      onClick={(e) => handleWipeChatHistoryClick(member.username, e)}
+                      title={`Wipe chat history with @${member.username}`}
+                      className="w-5 h-5 rounded bg-red-100 hover:bg-red-600 text-red-600 hover:text-white flex items-center justify-center text-[10px] font-bold transition cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+
+                  {/* Unread Badge */}
+                  {Boolean(member.unreadCount && member.unreadCount > 0) && (
+                    <span className="w-4 h-4 bg-rose-600 text-white rounded-full text-[9px] font-bold flex items-center justify-center shadow-xs animate-pulse">
+                      {member.unreadCount}
+                    </span>
+                  )}
+                </div>
+              </div>
             ))
           )}
         </div>
       </div>
 
-      {/* Active Chat Window: Fullscreen overlay on mobile when selected */}
+      {/* Active Chat Window */}
       <div className={`flex flex-col overflow-hidden bg-white ${!selectedFriend ? "hidden md:flex md:col-span-3 md:h-full" : "fixed inset-0 z-50 md:static md:inset-auto md:z-auto md:col-span-3 md:h-full"}`}>
         {selectedFriend ? (
           <>
-            <div className="p-4 border-b border-gray-200 bg-white flex items-center justify-between shadow-2xs shrink-0">
-              <div className="flex items-center gap-2.5">
-                {/* Mobile Back Button */}
-                <button
-                  type="button"
-                  onClick={() => setSelectedFriend(null)}
-                  className="md:hidden text-gray-600 hover:text-gray-900 mr-1 p-1 rounded-lg hover:bg-gray-100 transition cursor-pointer flex items-center"
-                  title="Back to conversations"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-                  </svg>
-                </button>
-                <span className="font-bold text-xs text-gray-900">Chatting with @{selectedFriend}</span>
+            <div className="p-4 border-b border-gray-200 bg-white flex items-center justify-between shadow-2xs shrink-0 relative">
+              <button
+                type="button"
+                onClick={() => setSelectedFriend(null)}
+                className="md:hidden text-gray-600 hover:text-gray-900 p-1 rounded-lg hover:bg-gray-100 transition cursor-pointer flex items-center z-10"
+                title="Back to conversations"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+                </svg>
+              </button>
+
+              <div className="absolute inset-x-0 flex items-center justify-center pointer-events-none">
+                <span className="font-bold text-xs text-gray-900">@{selectedFriend}</span>
               </div>
+
+              <div className="md:hidden w-7" />
             </div>
 
             {!isApproved && (
@@ -450,7 +535,7 @@ export default function MessagesPage() {
             )}
 
             {/* Messages Scroll Area */}
-            <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/30">
+            <div ref={messagesContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 bg-gray-50/30">
               {messages.length === 0 ? (
                 <div className="h-full flex items-center justify-center text-xs text-gray-400">
                   No messages yet with @{selectedFriend}. Send a message below!
@@ -479,23 +564,29 @@ export default function MessagesPage() {
                         ))}
                       </div>
 
-                      {/* Message Bubble */}
-                      <div className="relative">
+                      {/* Message Bubble Wrapper */}
+                      <div className="relative w-fit max-w-[75%] mb-4">
                         <div
-                          className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs shadow-2xs ${
-                            isMe ? "bg-[#e7b833] text-gray-900 font-medium rounded-br-xs" : "bg-white border border-gray-200 text-gray-800 rounded-bl-xs"
+                          className={`rounded-2xl px-4 pt-2.5 pb-3.5 text-xs shadow-2xs break-words whitespace-pre-wrap ${
+                            isMe ? "bg-black text-white font-medium rounded-br-xs" : "bg-white border border-gray-200 text-gray-800 rounded-bl-xs"
                           }`}
                         >
                           {msg.content}
                         </div>
 
-                        {/* Reaction Pills Display */}
+                        {/* Interactive Reaction Pills Display */}
                         {reactionEntries.length > 0 && (
-                          <div className={`absolute -bottom-3.5 flex items-center gap-0.5 bg-white border border-gray-200 rounded-full px-2 py-0.5 shadow-2xs text-[10px] z-10 ${isMe ? "right-2" : "left-2"}`}>
+                          <div className={`absolute -bottom-2.5 flex items-center gap-0.5 bg-white border border-gray-200 rounded-full px-2 py-0.5 shadow-sm text-[10px] z-10 ${isMe ? "right-3" : "left-3"}`}>
                             {Array.from(new Set(Object.values(reactionsObj))).map((emoji, idx) => (
-                              <span key={idx} className="cursor-pointer" title={Object.entries(reactionsObj).filter(([_, e]) => e === emoji).map(([u]) => `@${u}`).join(", ")}>
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => handleReaction(msg.id, emoji, reactionsObj)}
+                                className="cursor-pointer hover:scale-125 transition-transform px-0.5"
+                                title={`Click to change/remove reaction`}
+                              >
                                 {emoji}
-                              </span>
+                              </button>
                             ))}
                             {reactionEntries.length > 1 && (
                               <span className="text-[9px] font-bold text-gray-500 ml-0.5">{reactionEntries.length}</span>
@@ -505,10 +596,10 @@ export default function MessagesPage() {
                       </div>
 
                       {/* Timestamp & Read Status Receipt */}
-                      <div className={`flex items-center gap-2 mt-1.5 px-1 text-[9px] text-gray-400 font-mono ${isMe ? "flex-row-reverse" : "flex-row"}`}>
+                      <div className={`flex items-center gap-2 px-1 text-[9px] text-gray-400 font-mono ${isMe ? "flex-row-reverse" : "flex-row"}`}>
                         <span>{new Date(msg.created_at).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", hour12: true }).toLowerCase()}</span>
                         {isMe && (
-                          <span className={`font-bold ${msg.is_read ? "text-[#e7b833]" : "text-gray-400"}`}>
+                          <span className={`font-bold ${msg.is_read ? "text-black" : "text-gray-400"}`}>
                             {msg.is_read ? "Read" : "Sent"}
                           </span>
                         )}
@@ -519,7 +610,7 @@ export default function MessagesPage() {
               )}
             </div>
 
-            {/* Stable Form & Emoji Popup Picker with 2-line Textarea */}
+            {/* Stable Form & Emoji Popup Picker */}
             <div className="p-3 border-t border-gray-200 bg-white relative shrink-0">
               {showEmojiPicker && (
                 <div className="absolute bottom-full left-3 mb-2 bg-white border border-gray-200 shadow-xl rounded-xl p-2.5 grid grid-cols-5 gap-2 z-50">
@@ -580,6 +671,47 @@ export default function MessagesPage() {
           </div>
         )}
       </div>
+
+      {/* WIPE CHAT HISTORY CONFIRMATION MODAL */}
+      {showWipeModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[100]">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-sm overflow-hidden transition-all text-left">
+            <div className="bg-[#800000] text-white p-4 flex justify-between items-center font-bold">
+              <h3 className="text-base font-bold text-white">Wipe Chat History</h3>
+              <button
+                onClick={() => setShowWipeModal(false)}
+                className="text-red-100 hover:text-white text-lg leading-none cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="h-1 bg-[#660000]" />
+
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-gray-700 font-medium leading-relaxed">
+                Are you sure you want to wipe all chat history with <span className="font-bold">@{wipeTargetUser}</span>? This cannot be undone.
+              </p>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowWipeModal(false)}
+                  className="w-1/2 py-2 rounded text-xs font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
+                >
+                  No
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmWipe}
+                  className="w-1/2 py-2 rounded text-xs font-bold bg-[#800000] hover:bg-[#660000] text-white shadow transition cursor-pointer"
+                >
+                  Yes, Wipe
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

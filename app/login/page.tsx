@@ -279,7 +279,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [pin, setPin] = useState(""); // 6-digit 2FA PIN for signup/verification
+  const [pin, setPin] = useState(""); 
   const [showPin, setShowPin] = useState(false);
 
   const [firstName, setFirstName] = useState("");
@@ -528,7 +528,6 @@ export default function LoginPage() {
         return;
       }
 
-      // Register primary password with Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({ 
         email: cleanEmail, 
         password: password.trim() 
@@ -565,7 +564,6 @@ export default function LoginPage() {
           }
         }
 
-        // Store profile details including the 6-digit 2FA PIN with is_approved: false
         const { error: profileError } = await supabase.from("profiles").upsert({
           user_id: authData.user.id,
           username: username.trim(),
@@ -581,14 +579,13 @@ export default function LoginPage() {
           photo_url: publicPhotoUrl,
           pin: pin.trim(),
           balance_cents: 0,
-          is_approved: false, // Locked until KingDavid approves
+          is_approved: false,
           accumulated_session_seconds: 0
         });
 
         if (profileError) {
           setError("Registration failed: " + profileError.message);
         } else {
-          // Automatically sign in the newly registered user straight to dashboard
           const newSessionId = `SESSION-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
           await supabase
@@ -604,7 +601,6 @@ export default function LoginPage() {
       }
     } else if (view === "SIGNIN") {
       if (loginStep === "CREDENTIALS") {
-        // Step 1: Authenticate primary password with Supabase Auth
         const { data, error } = await supabase.auth.signInWithPassword({ 
           email: email.trim(), 
           password: password.trim() 
@@ -622,7 +618,6 @@ export default function LoginPage() {
           setError("");
         }
       } else if (loginStep === "PIN_VERIFY") {
-        // Step 2: Verify 6-digit 2FA PIN via secure RPC
         if (!tempUserId || pin.length !== 6) {
           setError("Please enter your valid 6-digit 2FA PIN.");
           setLoading(false);
@@ -639,7 +634,6 @@ export default function LoginPage() {
           return;
         }
 
-        // PIN is correct! Register active session and proceed to dashboard
         const newSessionId = `SESSION-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
         const { error: updateError } = await supabase
@@ -665,8 +659,8 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center p-4 font-sans relative overflow-hidden">
-      <div className="bg-black rounded-2xl shadow-2xl border border-zinc-800 w-full max-w-lg p-8 space-y-6 relative z-10 text-white">
+    <div className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-start py-8 px-4 font-sans overflow-y-auto">
+      <div className="bg-black md:bg-zinc-950 md:border md:border-zinc-800 rounded-2xl shadow-2xl w-full max-w-xl p-6 sm:p-8 space-y-6 text-white my-auto md:my-0">
         
         <div className="flex items-start justify-between border-b border-zinc-800 pb-4">
           <div className="flex items-start gap-3">
@@ -691,7 +685,7 @@ export default function LoginPage() {
 
         <form onSubmit={handleAuth} className="space-y-4">
           {view === "SIGNUP" && (
-            <>
+            <div className="space-y-4">
               {/* Profile Identity Photo Upload Box at the Very Top */}
               <div className="flex flex-col items-center justify-center pb-2 border-b border-zinc-800">
                 <div className="mb-2 text-center">
@@ -947,7 +941,7 @@ export default function LoginPage() {
                   </div>
                 </div>
               </div>
-            </>
+            </div>
           )}
 
           {/* Step 1: Credentials (Email + Password) or Step 2: 2FA PIN Verification */}
@@ -974,13 +968,75 @@ export default function LoginPage() {
                   }}
                   onBlur={checkPin}
                   placeholder="••••••"
-                  className="w-full border border-zinc-500 bg-zinc-700 rounded p-2.5 text-center text-white text-lg tracking-widest font-mono focus:outline-none focus:border-[#e7b833]"
+                  className="w-full border border-zinc-500 bg-zinc-700 rounded p-3 text-center text-white text-lg tracking-widest font-mono focus:outline-none focus:border-[#e7b833]"
                 />
               </div>
             </div>
-          ) : (
-            <>
-              <div className="pt-2 border-t border-zinc-800">
+          ) : view === "SIGNIN" && (
+            <div className="space-y-4 pt-2 border-t border-zinc-800">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-[11px] font-bold text-gray-300 uppercase">Email Address</label>
+                  {emailError && (
+                    <span className="text-[10px] font-bold text-rose-400">{emailError}</span>
+                  )}
+                </div>
+                <input
+                  type="text"
+                  required
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (emailError) setEmailError("");
+                  }}
+                  onBlur={() => {
+                    checkEmail();
+                  }}
+                  placeholder="john.smith@example.com"
+                  className={`w-full border rounded p-3 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 ${
+                    emailError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
+                  }`}
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-[11px] font-bold text-gray-300 uppercase">Password</label>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter password"
+                    className="w-full border border-zinc-500 bg-zinc-700 rounded p-3 pr-10 text-xs text-white focus:outline-none font-medium placeholder:text-zinc-400 focus:border-[#e7b833]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white focus:outline-none cursor-pointer"
+                  >
+                    {showPassword ? (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* For Sign Up Email and Password fields */}
+          {view === "SIGNUP" && (
+            <div className="space-y-4 pt-2 border-t border-zinc-800">
+              <div>
                 <div className="flex justify-between items-center mb-1">
                   <label className="block text-[11px] font-bold text-gray-300 uppercase">Email Address</label>
                   {emailError && (
@@ -1038,56 +1094,54 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              {view === "SIGNUP" && (
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-[11px] font-bold text-gray-300 uppercase">Security 2FA PIN (6 digits)</label>
-                    {pinError && (
-                      <span className="text-[10px] font-bold text-rose-400">{pinError}</span>
-                    )}
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showPin ? "text" : "password"}
-                      required
-                      maxLength={6}
-                      value={pin}
-                      onChange={(e) => {
-                        setPin(e.target.value);
-                        if (pinError) setPinError("");
-                      }}
-                      onBlur={checkPin}
-                      placeholder="••••••"
-                      className={`w-full border rounded p-2.5 pr-10 text-xs text-white bg-zinc-700 focus:outline-none font-mono tracking-widest placeholder:text-zinc-400 ${
-                        pinError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
-                      }`}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPin(!showPin)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white focus:outline-none cursor-pointer"
-                    >
-                      {showPin ? (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
-                        </svg>
-                      ) : (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                        </svg>
-                      )}
-                    </button>
-                  </div>
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-[11px] font-bold text-gray-300 uppercase">Security 2FA PIN (6 digits)</label>
+                  {pinError && (
+                    <span className="text-[10px] font-bold text-rose-400">{pinError}</span>
+                  )}
                 </div>
-              )}
-            </>
+                <div className="relative">
+                  <input
+                    type={showPin ? "text" : "password"}
+                    required
+                    maxLength={6}
+                    value={pin}
+                    onChange={(e) => {
+                      setPin(e.target.value);
+                      if (pinError) setPinError("");
+                    }}
+                    onBlur={checkPin}
+                    placeholder="••••••"
+                    className={`w-full border rounded p-2.5 pr-10 text-xs text-white bg-zinc-700 focus:outline-none font-mono tracking-widest placeholder:text-zinc-400 ${
+                      pinError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPin(!showPin)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white focus:outline-none cursor-pointer"
+                  >
+                    {showPin ? (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3.5 rounded-xl text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] disabled:opacity-50 text-gray-900 shadow-md transition cursor-pointer uppercase tracking-wider"
+            className="w-full py-3.5 rounded-xl text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] disabled:opacity-50 text-gray-900 shadow-md transition cursor-pointer uppercase tracking-wider mt-2"
           >
             {loading ? "Processing..." : view === "SIGNUP" ? "Submit Account Application" : loginStep === "PIN_VERIFY" ? "Complete Sign In" : "Sign In to Dashboard"}
           </button>
