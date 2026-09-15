@@ -32,8 +32,8 @@ function getTransactionIcon(type: string, title: string = "") {
   const lower = title.toLowerCase();
   if (lower.includes("claim") || lower.includes("pending balance transfer")) {
     return (
-      <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 font-bold text-xs shadow-2xs" title="Claim / Reward">
-        🎁
+      <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 font-bold text-xs shadow-2xs relative overflow-hidden" title="Claim / Reward">
+        <Image src="/pending-balance.png" alt="Pending Balance" fill sizes="32px" className="object-contain p-1" />
       </div>
     );
   }
@@ -85,7 +85,7 @@ export default function CommBankStyleDashboard() {
   const [accumulatedSessionSeconds, setAccumulatedSessionSeconds] = useState<number>(0);
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [friendRequestsCount, setFriendRequestsCount] = useState<number>(0);
-  
+
   // DYNAMIC TIMER, MULTIPLIER & CLAIM LINK
   const { accumulatedMs: activeSessionMilliseconds, pendingBalanceCents, multiplier, claimPendingBalance, addSessionDays, totalDays } = useSessionTimer();
 
@@ -115,8 +115,8 @@ export default function CommBankStyleDashboard() {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const ITEMS_PER_PAGE = 30;
 
-  // Floating money animation state ("rightGreen" for pending claim, "top" for admin fund injection)
-  const [floatingCoins, setFloatingCoins] = useState<{ id: number; text: string; animType: 'rightGreen' | 'top' }[]>([]);
+  // Floating money animation state ("floatUp" for pending claim, "top" for admin fund injection)
+  const [floatingCoins, setFloatingCoins] = useState<{ id: number; text: string; animType: 'floatUp' | 'top' }[]>([]);
 
   const fetchBadgeCounts = useCallback(async () => {
     if (!currentUsername) return;
@@ -157,7 +157,7 @@ export default function CommBankStyleDashboard() {
       .select("balance_cents")
       .eq("username", username)
       .single();
-    
+
     if (data) {
       if (typeof data.balance_cents === "number") setBalanceCents(data.balance_cents);
       return data.balance_cents;
@@ -640,10 +640,10 @@ export default function CommBankStyleDashboard() {
     const claimableCentsBefore = Math.floor(pendingBalanceCents * 100 + 1e-9);
     const claimableStr = formatCurrency(claimableCentsBefore);
     const success = await claimPendingBalance();
-    
+
     if (success) {
       const animId = Date.now();
-      setFloatingCoins((prev) => [...prev, { id: animId, text: `+${claimableStr}`, animType: "rightGreen" }]);
+      setFloatingCoins((prev) => [...prev, { id: animId, text: `+${claimableStr}`, animType: "floatUp" }]);
       setTimeout(() => {
         setFloatingCoins((prev) => prev.filter((item) => item.id !== animId));
       }, 1200);
@@ -813,7 +813,7 @@ export default function CommBankStyleDashboard() {
 
   const claimableCents = Math.floor(pendingBalanceCents * 100 + 1e-9);
   const isPayDisabled = balanceCents === null || balanceCents < 1;
-  
+
   const currentRankMinSeconds = currentBadge ? currentBadge.min_days * 86400 : 0;
   const nextRankMinSeconds = nextBadge ? nextBadge.min_days * 86400 : currentRankMinSeconds + 86400;
   const rankSpanSeconds = nextRankMinSeconds - currentRankMinSeconds;
@@ -826,7 +826,7 @@ export default function CommBankStyleDashboard() {
   const progressPercent = nextBadge 
     ? Number(Math.min(99.99, Math.max(0, rawProgressPercent)).toFixed(2)) 
     : 100.00;
-  
+
   const radius = 16;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (progressPercent / 100) * circumference;
@@ -846,10 +846,10 @@ export default function CommBankStyleDashboard() {
   return (
     <div className="space-y-4">
       <style>{`
-        @keyframes slideFromRightGreen {
-          0% { opacity: 0; transform: translate(50px, 0px) scale(0.85); }
-          25% { opacity: 1; transform: translate(0px, 0px) scale(1.05); }
-          100% { opacity: 0; transform: translate(-30px, 0px) scale(1); }
+        @keyframes floatStraightUp {
+          0% { opacity: 0; transform: translate(-50%, 0px) scale(0.85); }
+          25% { opacity: 1; transform: translate(-50%, -10px) scale(1.05); }
+          100% { opacity: 0; transform: translate(-50%, -40px) scale(1); }
         }
         @keyframes fallDownTop {
           0% { opacity: 0; transform: translate(-50%, -30px) scale(0.85); }
@@ -889,13 +889,13 @@ export default function CommBankStyleDashboard() {
 
       {/* Dashboard Metrics Grid (3 columns inline) */}
       <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 print:hidden`}>
-        
+
         {/* 1. BANK BALANCE CARD */}
-        <div className="bg-white rounded-xl border border-gray-200 p-3 shadow-sm flex flex-col justify-between hover:shadow-md transition-all relative overflow-hidden">
-          <div>
+        <div className="bg-white rounded-xl border border-gray-200 p-2.5 sm:p-3 shadow-sm flex flex-col justify-between hover:shadow-md transition-all relative overflow-hidden">
+          <div className="flex-1">
             <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Bank Balance</p>
-            <div className="relative w-full mt-1 mb-1">
-              <svg className="w-full h-8 sm:h-9 block overflow-visible" viewBox={`0 0 ${dynamicViewBoxWidth} 32`} preserveAspectRatio="xMinYMid meet">
+            <div className="relative w-full mt-0 mb-0">
+              <svg className="w-full h-7 sm:h-8 block overflow-visible" viewBox={`0 0 ${dynamicViewBoxWidth} 32`} preserveAspectRatio="xMinYMid meet">
                 <text 
                   x="0" 
                   y="24" 
@@ -912,13 +912,13 @@ export default function CommBankStyleDashboard() {
                   className={`absolute pointer-events-none z-30 font-mono font-black text-sm whitespace-nowrap ${
                     coin.animType === "top"
                       ? "top-0 left-1/2 -translate-x-1/2 text-[#b8860b]"
-                      : "top-1 right-0 text-[#0d8b07]"
+                      : "top-1 left-1/2 -translate-x-1/2 text-[#0d8b07]"
                   }`}
                   style={{
                     animation:
                       coin.animType === "top"
                         ? "fallDownTop 1.2s cubic-bezier(0.25, 1, 0.5, 1) forwards"
-                        : "slideFromRightGreen 1.2s cubic-bezier(0.25, 1, 0.5, 1) forwards",
+                        : "floatStraightUp 1.2s cubic-bezier(0.25, 1, 0.5, 1) forwards",
                     textShadow: "0 2px 4px rgba(0,0,0,0.15)",
                   }}
                 >
@@ -929,12 +929,12 @@ export default function CommBankStyleDashboard() {
           </div>
 
           {isApproved && (
-            <div className="mt-1 pt-1 border-t border-gray-100 flex flex-col gap-0.5">
+            <div className="mt-0.5 pt-0.5 border-t border-gray-100 flex flex-col gap-0.5">
               <button
                 onClick={handleOpenPayModal}
                 disabled={isPayDisabled}
                 title={isPayDisabled ? "Minimum balance of $0.01 required" : "Pay Someone"}
-                className={`w-full font-bold text-xs py-1.5 px-3 rounded-lg shadow-xs transition flex items-center justify-center gap-1.5 ${
+                className={`w-full h-8 font-bold text-xs px-3 rounded-lg shadow-xs transition flex items-center justify-center gap-1.5 ${
                   isPayDisabled
                     ? "bg-gray-100 text-gray-400 cursor-not-allowed"
                     : "bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 cursor-pointer"
@@ -942,7 +942,7 @@ export default function CommBankStyleDashboard() {
               >
                 <span className="text-sm">⇄</span> Pay Someone
               </button>
-              <div className="flex items-center justify-center text-[11px] text-gray-500 font-mono px-0.5 pt-0.5 relative">
+              <div className="flex items-center justify-center text-[11px] text-gray-500 font-mono px-0.5 h-4 relative">
                 <span>ID: @{currentUsername}</span>
                 {currentUsername === "KingDavid" && (
                   <button
@@ -950,7 +950,7 @@ export default function CommBankStyleDashboard() {
                       setAdminDollarInput("");
                       setShowAdminModal(true);
                     }}
-                    className="absolute right-0 bg-[#b8860b] hover:bg-[#d4a52b] text-gray-900 font-bold text-xs px-1.5 py-0.5 rounded transition cursor-pointer shadow-xs font-sans leading-none"
+                    className="absolute right-0 w-3.5 h-3.5 rounded bg-[#b8860b] hover:bg-[#d4a52b] text-gray-900 font-black text-[9px] flex items-center justify-center transition cursor-pointer shadow-xs font-sans leading-none"
                     title="Admin Capital Injection"
                   >
                     +
@@ -961,13 +961,21 @@ export default function CommBankStyleDashboard() {
           )}
         </div>
 
-        {/* 2. PENDING BALANCE CARD */}
+        {/* 2. PENDING BALANCE CARD WITH MULTIPLIER IN TOP RIGHT */}
         {isApproved && (
-          <div className="bg-white rounded-xl border border-gray-200 p-3 shadow-sm flex flex-col justify-between hover:shadow-md transition-all overflow-hidden">
-            <div>
+          <div className="bg-white rounded-xl border border-gray-200 p-2.5 sm:p-3 shadow-sm flex flex-col justify-between hover:shadow-md transition-all relative overflow-hidden">
+
+            {/* MULTIPLIER MOVED TO TOP RIGHT CORNER OF PENDING BALANCE CARD */}
+            <div className="absolute right-3.5 top-3 z-10">
+              <span className="text-xs font-mono font-extrabold text-indigo-600 block">
+                x {multiplier.toFixed(2)}
+              </span>
+            </div>
+
+            <div className="flex-1 pr-12">
               <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Pending Balance</p>
-              <div className="relative w-full mt-1 mb-1">
-                <svg className="w-full h-8 sm:h-9 block overflow-visible" viewBox={`0 0 ${dynamicPendingViewBoxWidth} 32`} preserveAspectRatio="xMinYMid meet">
+              <div className="relative w-full mt-0 mb-0">
+                <svg className="w-full h-7 sm:h-8 block overflow-visible" viewBox={`0 0 ${dynamicPendingViewBoxWidth} 32`} preserveAspectRatio="xMinYMid meet">
                   <text 
                     x="0" 
                     y="24" 
@@ -980,40 +988,35 @@ export default function CommBankStyleDashboard() {
               </div>
             </div>
 
-            <div className="mt-1 pt-1 border-t border-gray-100 flex flex-col gap-0.5">
-              <div className="relative inline-block w-full">
-                <button
-                  onClick={handleTransferPending}
-                  disabled={claimableCents < 3}
-                  title={claimableCents < 3 ? "Minimum transfer amount is $0.03" : "Claim whole cents to bank balance"}
-                  className={`w-full py-1.5 rounded-lg font-bold text-xs transition flex items-center justify-center gap-1.5 shadow-xs ${
-                    claimableCents < 3
-                      ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                      : "bg-[#0d8b07] hover:bg-[#0a6d05] text-white cursor-pointer shadow-sm"
-                  }`}
-                >
-                  <span>💸</span> Claim
-                </button>
+            <div className="mt-0.5 pt-0.5 border-t border-gray-100 flex flex-col gap-0.5">
+              <button
+                onClick={handleTransferPending}
+                disabled={claimableCents < 3}
+                title={claimableCents < 3 ? "Minimum transfer amount is $0.03" : "Claim whole cents to bank balance"}
+                className={`w-full h-8 font-bold text-xs px-3 rounded-lg shadow-xs transition flex items-center justify-center gap-1.5 ${
+                  claimableCents < 3
+                    ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                    : "bg-[#0d8b07] hover:bg-[#0a6d05] text-gray-900 cursor-pointer shadow-sm"
+                }`}
+              >
+                <span className="relative w-4 h-4 inline-block align-middle shrink-0">
+                  <Image src="/pending-balance.png" alt="Claim" fill sizes="16px" className="object-contain" />
+                </span> Claim
+              </button>
+              <div className="flex items-center justify-center text-[11px] text-gray-500 font-mono px-0.5 h-4">
+                Minimum transfer $0.03
               </div>
-              <p className="text-[11px] text-gray-500 text-center">Minimum transfer $0.03</p>
             </div>
           </div>
         )}
 
-        {/* 3. TOTAL ACTIVITY TIMER CARD WITH TIME BADGE & MULTIPLIER IN TOP RIGHT */}
+        {/* 3. TOTAL ACTIVITY TIMER CARD WITH REDUCED SPACING BETWEEN TIER ICONS */}
         {isApproved && (
-          <div className="bg-white rounded-xl border border-gray-200 p-3 shadow-sm flex flex-col justify-between hover:shadow-md transition-all relative">
-            
-            {/* MULTIPLIER ABSOLUTELY POSITIONED IN TOP RIGHT CORNER */}
-            <div className="absolute right-3.5 top-3.5 z-10">
-              <span className="text-xs font-mono font-extrabold text-indigo-600 block">
-                x {multiplier.toFixed(2)}
-              </span>
-            </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-2.5 sm:p-3 shadow-sm flex flex-col justify-between hover:shadow-md transition-all relative">
 
-            {/* TIME RANK */}
-            <div className="flex items-start justify-between pb-2 border-b border-gray-100 mb-1 pr-12">
-              <div className="flex items-start gap-2.5 min-w-0">
+            {/* TIME RANK (Top Section) */}
+            <div className="flex items-start justify-between pb-1.5 border-b border-gray-100 mb-1.5">
+              <div className="flex items-start gap-2.5 min-w-0 w-full">
                 <div className="relative w-9 h-9 shrink-0 mt-0.5">
                   <Image
                     src={`/badges/time/${currentBadge?.file_name || 'time-waster.png'}`}
@@ -1023,13 +1026,14 @@ export default function CommBankStyleDashboard() {
                     className="object-contain drop-shadow-sm"
                   />
                 </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider truncate">TIME RANK</p>
-                  <div className="flex items-center gap-1.5 truncate">
-                    <p className="text-xs font-bold text-gray-900 truncate">{currentBadge?.title || 'Time Waster'}</p>
-                    <span className="inline-flex items-center gap-1 shrink-0" title={`Rank Tier ${currentTier}`}>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider truncate">TIME RANK</p>
+
+                    {/* Tier Icons placed on the right side of TIME RANK */}
+                    <div className="flex items-center" title={`Rank Tier ${currentTier}`}>
                       {currentTier <= 5 ? (
-                        <div className="flex items-center gap-0.5">
+                        <div className="flex items-center -space-x-1">
                           {Array.from({ length: currentTier }).map((_, idx) => (
                             <div key={idx} className="relative w-3.5 h-3.5 shrink-0">
                               <Image src="/badges/time/golden-star.png" alt="Star" fill sizes="14px" className="object-contain drop-shadow-2xs" />
@@ -1037,7 +1041,7 @@ export default function CommBankStyleDashboard() {
                           ))}
                         </div>
                       ) : currentTier >= 6 && currentTier <= 9 ? (
-                        <div className="flex items-center gap-0.5">
+                        <div className="flex items-center -space-x-1">
                           {Array.from({ length: currentTier - 5 }).map((_, idx) => (
                             <div key={idx} className="relative w-3.5 h-3.5 shrink-0">
                               <Image src="/badges/time/golden-cross.png" alt="Cross" fill sizes="14px" className="object-contain drop-shadow-2xs" />
@@ -1055,8 +1059,10 @@ export default function CommBankStyleDashboard() {
                           <Image src="/badges/time/golden-infinity.png" alt="Infinity" fill sizes="14px" className="object-contain drop-shadow-2xs" />
                         </div>
                       )}
-                    </span>
+                    </div>
                   </div>
+
+                  <p className="text-xs font-bold text-gray-900 truncate">{currentBadge?.title || 'Time Waster'}</p>
                   {currentBadge?.quirky_phrase && (
                     <p className="text-[11px] text-gray-500 italic mt-0.2 leading-snug">
                       &ldquo;{currentBadge.quirky_phrase}&rdquo;
@@ -1066,67 +1072,87 @@ export default function CommBankStyleDashboard() {
               </div>
             </div>
 
-            {/* CENTERED TOTAL ACTIVITY TIMER */}
-            <div className="flex flex-col items-center justify-center py-0.5">
-              <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-0.5 text-center">Total Activity Timer</p>
-              <div className="flex items-center gap-1 font-mono text-[#b8860b] text-sm font-black tracking-tight mt-0.5 justify-center">
-                <div className="flex items-center gap-1">
+            {/* TOTAL ACTIVITY TIMER SECTION WITH PROGRESS METER */}
+            <div className="flex items-center justify-between pt-0.5 pb-0.5">
+              <div className="flex flex-col">
+                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">TOTAL ACTIVITY TIMER</p>
+                <div className="flex items-center gap-1.5">
                   {currentUsername === "KingDavid" && (
-                    <div className="flex items-center gap-1 mr-1">
-                      {/* Opens the custom Add Activity Days Modal window */}
-                      <button
-                        onClick={() => {
-                          setDashboardAddDaysInput("");
-                          setShowDashboardAddDaysModal(true);
-                        }}
-                        className="w-5 h-5 rounded-md bg-[#0d8b07] hover:bg-[#0a6d05] text-white text-xs font-black flex items-center justify-center shadow-xs cursor-pointer transition"
-                        title="Add Activity Days Window"
-                      >
-                        +
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => {
+                        setDashboardAddDaysInput("");
+                        setShowDashboardAddDaysModal(true);
+                      }}
+                      className="w-3.5 h-3.5 rounded bg-[#0d8b07] hover:bg-[#0a6d05] text-white text-[9px] font-black flex items-center justify-center shadow-xs cursor-pointer transition shrink-0 self-center"
+                      title="Add Activity Days Window"
+                    >
+                      +
+                    </button>
                   )}
-                  <span>+{timerParts.days}:{timerParts.hours}:{timerParts.mins}:{timerParts.secs}:{timerParts.ms}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* ABSOLUTE POSITIONED PROGRESS METER ON RIGHT MIDDLE */}
-            <div className="absolute right-3.5 top-1/2 -translate-y-1/2 z-10 bg-white p-1 rounded-full shadow-xs">
-              {nextBadge ? (
-                <div className="relative w-10 h-10 flex items-center justify-center" title={`Rank progress: ${progressPercent.toFixed(2)}%`}>
-                  <svg className="w-10 h-10 transform -rotate-90" viewBox="0 0 36 36">
-                    {/* Background track circle */}
-                    <path
-                      className="text-indigo-100"
-                      strokeWidth="3.5"
-                      stroke="currentColor"
-                      fill="none"
-                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                    />
-                    {/* Gradually filling progress circle */}
-                    <path
-                      className="text-indigo-600 transition-all duration-300 ease-out"
-                      strokeDasharray={circumference}
-                      strokeDashoffset={strokeDashoffset}
-                      strokeWidth="3.5"
-                      strokeLinecap="round"
-                      stroke="currentColor"
-                      fill="none"
-                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                    />
-                  </svg>
-                  <div className="absolute inset-0 flex items-center justify-center font-mono text-[7px] text-indigo-900 font-bold tracking-tighter">
-                    {progressPercent.toFixed(2)}%
+                  <div className="flex items-center gap-1 font-mono text-[#b8860b] text-base sm:text-lg font-black tracking-wide">
+                    <div className="flex flex-col items-center">
+                      <span>{timerParts.days}</span>
+                      <span className="text-[9px] text-gray-400 font-sans font-semibold tracking-tighter leading-none mt-0.5">D</span>
+                    </div>
+                    <span className="pb-2.5">:</span>
+                    <div className="flex flex-col items-center">
+                      <span>{timerParts.hours}</span>
+                      <span className="text-[9px] text-gray-400 font-sans font-semibold tracking-tighter leading-none mt-0.5">H</span>
+                    </div>
+                    <span className="pb-2.5">:</span>
+                    <div className="flex flex-col items-center">
+                      <span>{timerParts.mins}</span>
+                      <span className="text-[9px] text-gray-400 font-sans font-semibold tracking-tighter leading-none mt-0.5">M</span>
+                    </div>
+                    <span className="pb-2.5">:</span>
+                    <div className="flex flex-col items-center">
+                      <span>{timerParts.secs}</span>
+                      <span className="text-[9px] text-gray-400 font-sans font-semibold tracking-tighter leading-none mt-0.5">S</span>
+                    </div>
+                    <span className="pb-2.5">:</span>
+                    <div className="flex flex-col items-center">
+                      <span>{timerParts.ms}</span>
+                      <span className="text-[9px] text-gray-400 font-sans font-semibold tracking-tighter leading-none mt-0.5">MS</span>
+                    </div>
                   </div>
                 </div>
-              ) : (
-                <div className="w-10 h-10 rounded-full border-2 border-emerald-100 bg-emerald-50 flex items-center justify-center text-emerald-600 shadow-2xs" title="Max Rank Achieved">
-                  <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                    <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z" />
-                  </svg>
-                </div>
-              )}
+              </div>
+
+              {/* PROGRESS METER */}
+              <div className="bg-white p-1 rounded-full shadow-xs shrink-0 ml-2">
+                {nextBadge ? (
+                  <div className="relative w-12 h-12 flex items-center justify-center" title={`Rank progress: ${progressPercent.toFixed(2)}%`}>
+                    <svg className="w-12 h-12 transform -rotate-90" viewBox="0 0 36 36">
+                      <path
+                        className="text-indigo-100"
+                        strokeWidth="3.5"
+                        stroke="currentColor"
+                        fill="none"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      />
+                      <path
+                        className="text-indigo-600 transition-all duration-300 ease-out"
+                        strokeDasharray={circumference}
+                        strokeDashoffset={strokeDashoffset}
+                        strokeWidth="3.5"
+                        strokeLinecap="round"
+                        stroke="currentColor"
+                        fill="none"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center font-mono text-[8px] text-indigo-900 font-bold tracking-tighter">
+                      {progressPercent.toFixed(2)}%
+                    </div>
+                  </div>
+                ) : (
+                  <div className="w-12 h-12 rounded-full border-2 border-emerald-100 bg-emerald-50 flex items-center justify-center text-emerald-600 shadow-2xs" title="Max Rank Achieved">
+                    <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z" />
+                    </svg>
+                  </div>
+                )}
+              </div>
             </div>
 
           </div>
@@ -1144,6 +1170,7 @@ export default function CommBankStyleDashboard() {
               Showing {filteredTransactions.length === 0 ? 0 : startIndex + 1}–{Math.min(startIndex + ITEMS_PER_PAGE, filteredTransactions.length)} of {filteredTransactions.length}
               {searchQuery.trim() && ` (filtered from ${transactions.length})`}
             </span>
+
           </div>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
@@ -1270,7 +1297,9 @@ export default function CommBankStyleDashboard() {
                                   : "text-[#0d8b07] hover:underline"
                               }`}
                             >
-                              💸 Claim Pending Balance {claimableCents < 3 ? "(Min $0.03)" : ""}
+                              <span className="relative w-4 h-4 inline-block align-middle shrink-0 mr-1">
+                                <Image src="/pending-balance.png" alt="Claim" fill sizes="16px" className="object-contain" />
+                              </span> Claim Pending Balance {claimableCents < 3 ? "(Min $0.03)" : ""}
                             </button>
                           )}
                         </div>
@@ -1298,7 +1327,7 @@ export default function CommBankStyleDashboard() {
                       <td className="py-3.5 px-5 border-r border-gray-100 print:border-gray-300 print:bg-white relative">
                         <div className="flex items-center gap-3 relative group/item">
                           {getTransactionIcon(tx.type, tx.title)}
-                          
+
                           {/* Full text details visible on larger screens (lg and above) */}
                           <div className="hidden lg:block flex-1 min-w-0">
                             <div className="flex items-center justify-between">
@@ -1328,13 +1357,6 @@ export default function CommBankStyleDashboard() {
                             <div className="text-xs text-gray-500 mt-0.5 font-mono print:text-gray-600">
                               {tx.dateTime} • {tx.category} • Ref: {tx.id}
                             </div>
-                          </div>
-
-                          {/* Collapsed view on smaller viewports: Shows only icon, with text hidden */}
-                          <div className="lg:hidden flex-1 min-w-0">
-                            <span className="font-semibold text-xs text-gray-900 truncate block">
-                              {displayTitle}
-                            </span>
                           </div>
 
                           {/* Hover Tooltip appearing on smaller viewports (< lg) */}
@@ -1388,396 +1410,183 @@ export default function CommBankStyleDashboard() {
                   );
                 })
               )}
-            </tbody>
-          </table>
-        </div>
-
-        {filteredTransactions.length > ITEMS_PER_PAGE && (
-          <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between text-xs text-gray-600 print:hidden">
-            <span>
-              Page <strong>{currentPage}</strong> of <strong>{totalPages}</strong> (30 items / page)
-            </span>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-                disabled={currentPage === 1}
-                className="px-3 py-1.5 rounded border border-gray-300 bg-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition cursor-pointer"
-              >
-                Previous
-              </button>
-              <button
-                onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
-                disabled={currentPage === totalPages}
-                className="px-3 py-1.5 rounded border border-gray-300 bg-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition cursor-pointer"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
+          </tbody>
+        </table>
       </div>
 
-      {/* PAYMENT FLOW MODAL */}
-      {showPayModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 print:p-0 print:bg-white print:static">
-          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all print:border-none print:shadow-none print:max-w-none">
-            <div className="bg-[#1e293b] text-white p-4 flex justify-between items-center print:hidden">
-              <h3 className="text-base font-bold">
-                {payStep === "INPUT" && "Pay Someone"}
-                {payStep === "CONFIRM" && "Review & Confirm Transfer"}
-                {payStep === "RECEIPT" && "OFFICIAL TRANSACTION RECEIPT"}
-              </h3>
-              {payStep !== "RECEIPT" && (
-                <button
-                  onClick={handleClosePayModal}
-                  className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-            <div className="h-1 bg-[#e7b833] print:hidden" />
-
-            {payStep === "INPUT" && (
-              <form onSubmit={handleReviewPayment} className="p-5 space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Recipient Payment ID (Username)
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2 text-gray-500 font-semibold">@</span>
-                    <input
-                      type="text"
-                      required
-                      placeholder="JohnSmith (Case Insensitive)"
-                      value={recipient}
-                      onChange={(e) => setRecipient(e.target.value.replace(/^@/, ""))}
-                      className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded text-sm text-black focus:outline-none focus:border-[#e7b833]"
-                    />
-                  </div>
-                  <p className="text-[11px] text-gray-400 mt-1">
-                    Send funds securely across verified user accounts instantly!
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Amount ($)</label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2 text-gray-500 font-semibold">$</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      max={balanceCents !== null ? balanceCents / 100 : undefined}
-                      value={dollarInput}
-                      onChange={(e) => setDollarInput(e.target.value)}
-                      placeholder="1.00"
-                      className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded text-sm text-black font-mono focus:outline-none focus:border-[#e7b833]"
-                    />
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1 flex justify-between">
-                    <span>Minimum: <strong>$0.01</strong></span>
-                    <span>Available balance: <strong>{balanceCents !== null ? formatCurrency(balanceCents) : "$—"}</strong></span>
-                  </div>
-                </div>
-
-                <div className="bg-gray-50 p-3 rounded border border-gray-200 text-xs text-gray-600 space-y-1">
-                  <div className="flex justify-between">
-                    <span>From:</span>
-                    <span className="font-semibold text-gray-800">@{currentUsername}</span>
-                  </div>
-                </div>
-
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={handleClosePayModal}
-                    className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
-                  >
-                    Review Transfer
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {payStep === "CONFIRM" && (
-              <div className="p-5 space-y-4">
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3.5 flex gap-3 text-amber-900">
-                  <svg className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-                  </svg>
-                  <div className="text-xs leading-relaxed">
-                    <strong className="font-bold block text-amber-950">Confirm Payment Details</strong>
-                    Instant transfers cannot be reversed. Please verify that the recipient username is correct before sending.
-                  </div>
-                </div>
-
-                <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 space-y-2.5 text-xs text-gray-700">
-                  <div className="flex justify-between items-center pb-2 border-b border-gray-200">
-                    <span className="text-gray-500 uppercase tracking-wider font-semibold text-[10px]">Transfer Amount</span>
-                    <span className="text-xl font-mono font-bold text-gray-900">
-                      ${parseFloat(dollarInput).toFixed(2)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Sender ID:</span>
-                    <strong className="text-gray-900 font-mono text-sm">@{currentUsername}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Recipient ID:</span>
-                    <strong className="text-gray-900 font-mono text-sm">@{recipient.trim().replace(/^@/, "")}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Category:</span>
-                    <span className="font-semibold text-gray-900">Debit</span>
-                  </div>
-                  <div className="flex justify-between pt-1 border-t border-gray-200">
-                    <span className="text-gray-500">Remaining Balance:</span>
-                    <span className="font-mono font-semibold text-gray-800">
-                      {balanceCents !== null ? formatCurrency(balanceCents - Math.round(parseFloat(dollarInput) * 100)) : "$—"}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setPayStep("INPUT")}
-                    className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer"
-                  >
-                    Back / Edit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleExecutePayment}
-                    className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
-                  >
-                    Authorize & Send
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {payStep === "RECEIPT" && completedTxn && (
-              <div className="p-6 text-center space-y-5 print:pt-14 print:px-12 print:pb-8 print:max-w-xl print:mx-auto">
-                <div className="hidden print:block pb-4 mb-4 border-b border-gray-300 text-left">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h1 className="text-xl font-black text-gray-900">SOCIAL TIME</h1>
-                      <p className="text-xs uppercase tracking-wider text-gray-500 font-bold">OFFICIAL TRANSACTION RECEIPT</p>
-                    </div>
-                    <div className="text-right text-xs text-gray-600">
-                      <div>Date Requested: <strong>{getRequestedTimestamp()}</strong></div>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-bold mb-1.5 bg-rose-100 text-rose-800 print:bg-rose-100 print:text-rose-800">
-                    Settled Transfer
-                  </span>
-                  <h4 className="text-xl font-extrabold text-gray-900">
-                    {completedTxn.recipientName ? `Transfer to @${completedTxn.recipientName}` : completedTxn.title}
-                  </h4>
-                  <p className="text-xs text-gray-500 mt-0.5 font-mono">Reference: {completedTxn.id}</p>
-                </div>
-
-                <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-4 text-left space-y-2 text-xs print:border-solid print:bg-white print:p-6">
-                  <div className="flex justify-between items-center pb-2 border-b border-gray-200">
-                    <span className="text-gray-500 font-medium">Total Amount</span>
-                    <span className={`text-base font-mono font-black ${
-                      completedTxn.type === "CREDIT" ? "text-emerald-600 print:text-emerald-600" : "text-rose-600 print:text-rose-600"
-                    }`}>
-                      {completedTxn.type === "CREDIT" ? "+" : "-"}{formatCurrency(completedTxn.centsAmount)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Sender ID</span>
-                    <span className="font-semibold text-gray-900 font-mono">@{completedTxn.senderName || currentUsername}</span>
-                  </div>
-                  {completedTxn.recipientName && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Recipient ID</span>
-                      <span className="font-semibold text-gray-900 font-mono">@{completedTxn.recipientName}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Category</span>
-                    <span className="text-gray-800">{completedTxn.category}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Date & Timestamp</span>
-                    <span className="text-gray-800 font-mono">{completedTxn.dateTime}</span>
-                  </div>
-                  <div className="flex justify-between pt-1 border-t border-gray-200">
-                    <span className="text-gray-500">Running Balance</span>
-                    <span className="font-mono font-bold text-gray-900">
-                      {formatCurrency(completedTxn.balanceAfterCents)}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex gap-2.5 pt-1 print:hidden">
-                  <button
-                    type="button"
-                    onClick={handlePrintIndividualReceipt}
-                    className="w-1/2 py-2.5 rounded-lg text-sm font-semibold border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 flex items-center justify-center gap-1.5 transition cursor-pointer"
-                  >
-                    <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0 1 10.56 0m-10.56 0L6.34 18m11.318-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0 .229 2.523a1.125 1.125 0 0 1-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0 0 21 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 0 0-1.913-.247M6.34 18H5.25A2.25 2.25 0 0 1 3 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 0 1 1.913-.247m10.5 0a48.536 48.536 0 0 0-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5Zm-3 0h.008v.008H15V10.5Z" />
-                    </svg>
-                    Print Receipt
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleClosePayModal}
-                    className="w-1/2 py-2.5 rounded-lg text-sm font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow-sm transition cursor-pointer"
-                  >
-                    Done
-                  </button>
-                </div>
-              </div>
-            )}
+      {filteredTransactions.length > ITEMS_PER_PAGE && (
+        <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between text-xs text-gray-600 print:hidden">
+          <span>
+            Page <strong>{currentPage}</strong> of <strong>{totalPages}</strong> (30 items / page)
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-1.5 rounded border border-gray-300 bg-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition cursor-pointer"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+              disabled={currentPage === totalPages}
+              className="px-3 py-1.5 rounded border border-gray-300 bg-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition cursor-pointer"
+            >
+              Next
+            </button>
           </div>
         </div>
       )}
+    </div>
 
-      {/* ADMIN CAPITAL INJECTION MODAL */}
-      {showAdminModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all text-left">
-            <div className="bg-[#b8860b] text-white p-4 flex justify-between items-center font-bold">
-              <h3 className="text-base font-bold text-white">Admin Capital Injection</h3>
+    {/* PAYMENT FLOW MODAL */}
+    {showPayModal && (
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 print:p-0 print:bg-white print:static">
+        <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all print:border-none print:shadow-none print:max-w-none">
+          <div className="bg-[#1e293b] text-white p-4 flex justify-between items-center print:hidden">
+            <h3 className="text-base font-bold">
+              {payStep === "INPUT" && "Pay Someone"}
+              {payStep === "CONFIRM" && "Review & Confirm Transfer"}
+              {payStep === "RECEIPT" && "OFFICIAL TRANSACTION RECEIPT"}
+            </h3>
+            {payStep !== "RECEIPT" && (
               <button
-                onClick={() => setShowAdminModal(false)}
-                className="text-amber-100 hover:text-white text-lg leading-none cursor-pointer"
+                onClick={handleClosePayModal}
+                className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer"
               >
                 ✕
               </button>
-            </div>
-            <div className="h-1 bg-[#9a7009]" />
+            )}
+          </div>
+          <div className="h-1 bg-[#e7b833] print:hidden" />
 
-            <form onSubmit={handleAdminInject} className="p-5 space-y-4">
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
-                You are logged in as <strong>KingDavid</strong> (Administrator). Enter any amount to mint directly into your wallet balance.
+          {payStep === "INPUT" && (
+            <form onSubmit={handleReviewPayment} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                  Recipient Payment ID (Username)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2 text-gray-500 font-semibold">@</span>
+                  <input
+                    type="text"
+                    required
+                    placeholder="JohnSmith (Case Insensitive)"
+                    value={recipient}
+                    onChange={(e) => setRecipient(e.target.value.replace(/^@/, ""))}
+                    className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded text-sm text-black focus:outline-none focus:border-[#e7b833]"
+                  />
+                </div>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Send funds securely across verified user accounts instantly!
+                </p>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Injection Amount ($)
-                </label>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Amount ($)</label>
                 <div className="relative">
                   <span className="absolute left-3 top-2 text-gray-500 font-semibold">$</span>
                   <input
                     type="number"
                     step="0.01"
                     min="0.01"
-                    required
-                    placeholder="e.g. 1000.00"
-                    value={adminDollarInput}
-                    onChange={(e) => setAdminDollarInput(e.target.value)}
-                    className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded text-sm text-black font-mono focus:outline-none focus:border-[#b8860b]"
+                    max={balanceCents !== null ? balanceCents / 100 : undefined}
+                    value={dollarInput}
+                    onChange={(e) => setDollarInput(e.target.value)}
+                    placeholder="1.00"
+                    className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded text-sm text-black font-mono focus:outline-none focus:border-[#e7b833]"
                   />
+                </div>
+                <div className="text-xs text-gray-500 mt-1 flex justify-between">
+                  <span>Minimum: <strong>$0.01</strong></span>
+                  <span>Available balance: <strong>{balanceCents !== null ? formatCurrency(balanceCents) : "$—"}</strong></span>
+                </div>
+              </div>
+
+              <div className="bg-gray-50 p-3 rounded border border-gray-200 text-xs text-gray-600 space-y-1">
+                <div className="flex justify-between">
+                  <span>From:</span>
+                  <span className="font-semibold text-gray-800">@{currentUsername}</span>
                 </div>
               </div>
 
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowAdminModal(false)}
-                  className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
+                  onClick={handleClosePayModal}
+                  className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#b8860b] hover:bg-[#d4a52b] text-white shadow transition cursor-pointer"
+                  className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
                 >
-                  Mint Funds
+                  Review Transfer
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* DASHBOARD CUSTOM ADD DAYS MODAL (++) */}
-      {showDashboardAddDaysModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all text-left">
-            <div className="bg-[#0d8b07] text-white p-4 flex justify-between items-center font-bold">
-              <h3 className="text-base font-bold">⏱️ Add Activity Days</h3>
-              <button
-                onClick={() => setShowDashboardAddDaysModal(false)}
-                className="text-emerald-100 hover:text-white text-lg leading-none cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="h-1 bg-[#0a6d05]" />
-
-            <form onSubmit={handleExecuteDashboardAddDays} className="p-5 space-y-4">
-              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-900">
-                Enter the number of days to append to <strong>KingDavid</strong>&apos;s activity timer and elevate badge rank.
+          {payStep === "CONFIRM" && (
+            <div className="p-5 space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3.5 flex gap-3 text-amber-900">
+                <svg className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                </svg>
+                <div className="text-xs leading-relaxed">
+                  <strong className="font-bold block text-amber-950">Confirm Payment Details</strong>
+                  Instant transfers cannot be reversed. Please verify that the recipient username is correct before sending.
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Days to Add
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="1000000000"
-                  required
-                  placeholder="e.g. 10"
-                  value={dashboardAddDaysInput}
-                  onChange={(e) => setDashboardAddDaysInput(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded text-sm text-black font-mono focus:outline-none focus:border-[#0d8b07]"
-                />
+              <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 space-y-2.5 text-xs text-gray-700">
+                <div className="flex justify-between items-center pb-2 border-b border-gray-200">
+                  <span className="text-gray-500 uppercase tracking-wider font-semibold text-[10px]">Transfer Amount</span>
+                  <span className="text-xl font-mono font-bold text-gray-900">
+                    ${parseFloat(dollarInput).toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Sender ID:</span>
+                  <strong className="text-gray-900 font-mono text-sm">@{currentUsername}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Recipient ID:</span>
+                  <strong className="text-gray-900 font-mono text-sm">@{recipient.trim().replace(/^@/, "")}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Category:</span>
+                  <span className="font-semibold text-gray-900">Debit</span>
+                </div>
+                <div className="flex justify-between pt-1 border-t border-gray-200">
+                  <span className="text-gray-500">Remaining Balance:</span>
+                  <span className="font-mono font-semibold text-gray-800">
+                    {balanceCents !== null ? formatCurrency(balanceCents - Math.round(parseFloat(dollarInput) * 100)) : "$—"}
+                  </span>
+                </div>
               </div>
 
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowDashboardAddDaysModal(false)}
-                  className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
+                  onClick={() => setPayStep("INPUT")}
+                  className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer"
                 >
-                  Cancel
+                  Back / Edit
                 </button>
                 <button
-                  type="submit"
-                  className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#0d8b07] hover:bg-[#0a6d05] text-white shadow transition cursor-pointer"
+                  type="button"
+                  onClick={handleExecutePayment}
+                  className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
                 >
-                  Add Days
+                  Authorize & Send
                 </button>
               </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* HISTORICAL RECEIPT MODAL */}
-      {viewingTxn && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 print:p-0 print:bg-white print:static">
-          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all print:border-none print:shadow-none print:max-w-none">
-            <div className="bg-[#1e293b] text-white p-4 flex justify-between items-center print:hidden">
-              <h3 className="text-base font-bold">OFFICIAL TRANSACTION RECEIPT</h3>
-              <button
-                onClick={() => setViewingTxn(null)}
-                className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer"
-              >
-                ✕
-              </button>
             </div>
-            <div className="h-1 bg-[#e7b833] print:hidden" />
+          )}
 
+          {payStep === "RECEIPT" && completedTxn && (
             <div className="p-6 text-center space-y-5 print:pt-14 print:px-12 print:pb-8 print:max-w-xl print:mx-auto">
               <div className="hidden print:block pb-4 mb-4 border-b border-gray-300 text-left">
                 <div className="flex justify-between items-start">
@@ -1792,54 +1601,46 @@ export default function CommBankStyleDashboard() {
               </div>
 
               <div>
-                <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold mb-1.5 ${
-                  viewingTxn.type === "CREDIT"
-                    ? "bg-emerald-100 text-emerald-800 print:bg-emerald-100 print:text-emerald-800"
-                    : "bg-rose-100 text-rose-800 print:bg-rose-100 print:text-rose-800"
-                }`}>
-                  {viewingTxn.type === "CREDIT" ? "Direct Credit" : "Settled Transfer"}
+                <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-bold mb-1.5 bg-rose-100 text-rose-800 print:bg-rose-100 print:text-rose-800">
+                  Settled Transfer
                 </span>
                 <h4 className="text-xl font-extrabold text-gray-900">
-                  {viewingTxn.title === "Admin Capital Injection" || viewingTxn.title === "Pending Balance Transfer"
-                    ? viewingTxn.title
-                    : (viewingTxn.recipientName ? `Transfer to @${viewingTxn.recipientName}` : viewingTxn.title)}
+                  {completedTxn.recipientName ? `Transfer to @${completedTxn.recipientName}` : completedTxn.title}
                 </h4>
-                <p className="text-xs text-gray-500 mt-0.5 font-mono">Reference: {viewingTxn.id}</p>
+                <p className="text-xs text-gray-500 mt-0.5 font-mono">Reference: {completedTxn.id}</p>
               </div>
 
               <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-4 text-left space-y-2 text-xs print:border-solid print:bg-white print:p-6">
                 <div className="flex justify-between items-center pb-2 border-b border-gray-200">
                   <span className="text-gray-500 font-medium">Total Amount</span>
                   <span className={`text-base font-mono font-black ${
-                    viewingTxn.type === "CREDIT" ? "text-emerald-600 print:text-emerald-600" : "text-rose-600 print:text-rose-600"
+                    completedTxn.type === "CREDIT" ? "text-emerald-600 print:text-emerald-600" : "text-rose-600 print:text-rose-600"
                   }`}>
-                    {viewingTxn.type === "CREDIT" ? "+" : "-"}{formatCurrency(viewingTxn.centsAmount)}
+                    {completedTxn.type === "CREDIT" ? "+" : "-"}{formatCurrency(completedTxn.centsAmount)}
                   </span>
                 </div>
-                {viewingTxn.title !== "Admin Capital Injection" && viewingTxn.title !== "Pending Balance Transfer" && (
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Sender ID</span>
-                    <span className="font-semibold text-gray-900 font-mono">@{viewingTxn.senderName || currentUsername}</span>
-                  </div>
-                )}
-                {viewingTxn.recipientName && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Sender ID</span>
+                  <span className="font-semibold text-gray-900 font-mono">@{completedTxn.senderName || currentUsername}</span>
+                </div>
+                {completedTxn.recipientName && (
                   <div className="flex justify-between">
                     <span className="text-gray-500">Recipient ID</span>
-                    <span className="font-semibold text-gray-900 font-mono">@{viewingTxn.recipientName}</span>
+                    <span className="font-semibold text-gray-900 font-mono">@{completedTxn.recipientName}</span>
                   </div>
                 )}
                 <div className="flex justify-between">
                   <span className="text-gray-500">Category</span>
-                  <span className="text-gray-800">{viewingTxn.category}</span>
+                  <span className="text-gray-800">{completedTxn.category}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Date & Timestamp</span>
-                  <span className="text-gray-800 font-mono">{viewingTxn.dateTime}</span>
+                  <span className="text-gray-800 font-mono">{completedTxn.dateTime}</span>
                 </div>
                 <div className="flex justify-between pt-1 border-t border-gray-200">
                   <span className="text-gray-500">Running Balance</span>
                   <span className="font-mono font-bold text-gray-900">
-                    {formatCurrency(viewingTxn.balanceAfterCents)}
+                    {formatCurrency(viewingTxn?.balanceAfterCents ?? completedTxn.balanceAfterCents)}
                   </span>
                 </div>
               </div>
@@ -1857,16 +1658,237 @@ export default function CommBankStyleDashboard() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setViewingTxn(null)}
+                  onClick={handleClosePayModal}
                   className="w-1/2 py-2.5 rounded-lg text-sm font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow-sm transition cursor-pointer"
                 >
                   Done
                 </button>
               </div>
             </div>
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* ADMIN CAPITAL INJECTION MODAL */}
+    {showAdminModal && (
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all text-left">
+          <div className="bg-[#b8860b] text-white p-4 flex justify-between items-center font-bold">
+            <h3 className="text-base font-bold text-white">Admin Capital Injection</h3>
+            <button
+              onClick={() => setShowAdminModal(false)}
+              className="text-amber-100 hover:text-white text-lg leading-none cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="h-1 bg-[#9a7009]" />
+
+          <form onSubmit={handleAdminInject} className="p-5 space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
+              You are logged in as <strong>KingDavid</strong> (Administrator). Enter any amount to mint directly into your wallet balance.
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                Injection Amount ($)
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-2 text-gray-500 font-semibold">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  required
+                  placeholder="e.g. 1000.00"
+                  value={adminDollarInput}
+                  onChange={(e) => setAdminDollarInput(e.target.value)}
+                  className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded text-sm text-black font-mono focus:outline-none focus:border-[#b8860b]"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowAdminModal(false)}
+                className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#b8860b] hover:bg-[#d4a52b] text-white shadow transition cursor-pointer"
+              >
+                Mint Funds
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )}
+
+    {/* DASHBOARD CUSTOM ADD DAYS MODAL (++) */}
+    {showDashboardAddDaysModal && (
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all text-left">
+          <div className="bg-[#0d8b07] text-white p-4 flex justify-between items-center font-bold">
+            <h3 className="text-base font-bold">⏱️ Add Activity Days</h3>
+            <button
+              onClick={() => setShowDashboardAddDaysModal(false)}
+              className="text-emerald-100 hover:text-white text-lg leading-none cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="h-1 bg-[#0a6d05]" />
+
+          <form onSubmit={handleExecuteDashboardAddDays} className="p-5 space-y-4">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-900">
+              Enter the number of days to append to <strong>KingDavid</strong>&apos;s activity timer and elevate badge rank.
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                Days to Add
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="1000000000"
+                required
+                placeholder="e.g. 10"
+                value={dashboardAddDaysInput}
+                onChange={(e) => setDashboardAddDaysInput(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded text-sm text-black font-mono focus:outline-none focus:border-[#0d8b07]"
+              />
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowDashboardAddDaysModal(false)}
+                className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#0d8b07] hover:bg-[#0a6d05] text-white shadow transition cursor-pointer"
+              >
+                Add Days
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )}
+
+    {/* HISTORICAL RECEIPT MODAL */}
+    {viewingTxn && (
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 print:p-0 print:bg-white print:static">
+        <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all print:border-none print:shadow-none print:max-w-none">
+          <div className="bg-[#1e293b] text-white p-4 flex justify-between items-center print:hidden">
+            <h3 className="text-base font-bold">OFFICIAL TRANSACTION RECEIPT</h3>
+            <button
+              onClick={() => setViewingTxn(null)}
+              className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="h-1 bg-[#e7b833] print:hidden" />
+
+          <div className="p-6 text-center space-y-5 print:pt-14 print:px-12 print:pb-8 print:max-w-xl print:mx-auto">
+            <div className="hidden print:block pb-4 mb-4 border-b border-gray-300 text-left">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h1 className="text-xl font-black text-gray-900">SOCIAL TIME</h1>
+                  <p className="text-xs uppercase tracking-wider text-gray-500 font-bold">OFFICIAL TRANSACTION RECEIPT</p>
+                </div>
+                <div className="text-right text-xs text-gray-600">
+                  <div>Date Requested: <strong>{getRequestedTimestamp()}</strong></div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold mb-1.5 ${
+                viewingTxn.type === "CREDIT"
+                  ? "bg-emerald-100 text-emerald-800 print:bg-emerald-100 print:text-emerald-800"
+                  : "bg-rose-100 text-rose-800 print:bg-rose-100 print:text-rose-800"
+              }`}>
+                {viewingTxn.type === "CREDIT" ? "Direct Credit" : "Settled Transfer"}
+              </span>
+              <h4 className="text-xl font-extrabold text-gray-900">
+                {viewingTxn.title === "Admin Capital Injection" || viewingTxn.title === "Pending Balance Transfer"
+                  ? viewingTxn.title
+                  : (viewingTxn.recipientName ? `Transfer to @${viewingTxn.recipientName}` : viewingTxn.title)}
+              </h4>
+              <p className="text-xs text-gray-500 mt-0.5 font-mono">Reference: {viewingTxn.id}</p>
+            </div>
+
+            <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-4 text-left space-y-2 text-xs print:border-solid print:bg-white print:p-6">
+              <div className="flex justify-between items-center pb-2 border-b border-gray-200">
+                <span className="text-gray-500 font-medium">Total Amount</span>
+                <span className={`text-base font-mono font-black ${
+                  viewingTxn.type === "CREDIT" ? "text-emerald-600 print:text-emerald-600" : "text-rose-600 print:text-rose-600"
+                }`}>
+                  {viewingTxn.type === "CREDIT" ? "+" : "-"}{formatCurrency(viewingTxn.centsAmount)}
+                </span>
+              </div>
+              {viewingTxn.title !== "Admin Capital Injection" && viewingTxn.title !== "Pending Balance Transfer" && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Sender ID</span>
+                  <span className="font-semibold text-gray-900 font-mono">@{viewingTxn.senderName || currentUsername}</span>
+                </div>
+              )}
+              {viewingTxn.recipientName && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Recipient ID</span>
+                  <span className="font-semibold text-gray-900 font-mono">@{viewingTxn.recipientName}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-gray-500">Category</span>
+                <span className="text-gray-800">{viewingTxn.category}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Date & Timestamp</span>
+                <span className="text-gray-800 font-mono">{viewingTxn.dateTime}</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-gray-200">
+                <span className="text-gray-500">Running Balance</span>
+                <span className="font-mono font-bold text-gray-900">
+                  {formatCurrency(viewingTxn.balanceAfterCents)}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex gap-2.5 pt-1 print:hidden">
+              <button
+                type="button"
+                onClick={handlePrintIndividualReceipt}
+                className="w-1/2 py-2.5 rounded-lg text-sm font-semibold border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 flex items-center justify-center gap-1.5 transition cursor-pointer"
+              >
+                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0 1 10.56 0m-10.56 0L6.34 18m11.318-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0 .229 2.523a1.125 1.125 0 0 1-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0 0 21 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 0 0-1.913-.247M6.34 18H5.25A2.25 2.25 0 0 1 3 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 0 1 1.913-.247m10.5 0a48.536 48.536 0 0 0-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5Zm-3 0h.008v.008H15V10.5Z" />
+                </svg>
+                Print Receipt
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewingTxn(null)}
+                className="w-1/2 py-2.5 rounded-lg text-sm font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow-sm transition cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
-      )}
-    </div>
+      </div>
+    )}
+  </div>
   );
 }

@@ -11,43 +11,6 @@ interface NavbarProps {
   onRefreshData?: () => void;
 }
 
-function SessionNavbarClock({ isCollapsed }: { isCollapsed: boolean }) {
-  const { accumulatedMs } = useSessionTimer();
-
-  const getTimerBreakdown = (ms: number) => {
-    const milliseconds = Math.floor((ms % 1000) / 10);
-    const totalSeconds = Math.floor(ms / 1000);
-    const seconds = totalSeconds % 60;
-    const totalMinutes = Math.floor(totalSeconds / 60);
-    const minutes = totalMinutes % 60;
-    const totalHours = Math.floor(totalMinutes / 60);
-    const hours = totalHours % 24;
-    const days = Math.floor(totalHours / 24);
-
-    const pad = (n: number, z = 2) => String(n).padStart(z, "0");
-    return {
-      days: String(days),
-      hours: pad(hours),
-      mins: pad(minutes),
-      secs: pad(seconds),
-      ms: pad(milliseconds, 2)
-    };
-  };
-
-  const timerParts = getTimerBreakdown(accumulatedMs);
-
-  return (
-    <div className="flex items-center gap-1 font-mono text-[#b8860b] text-[11px] font-black tracking-tight shrink-0 justify-center overflow-hidden" title="Live Session Activity Timer">
-      <span>⏱️</span>
-      <div className={`${isCollapsed ? "opacity-0 group-hover:opacity-100" : "opacity-100"} transition-opacity duration-300 flex items-center gap-0.5 whitespace-nowrap`}>
-        <span>{timerParts.days}d</span>:
-        <span>{timerParts.hours}h</span>:
-        <span>{timerParts.mins}m</span>
-      </div>
-    </div>
-  );
-}
-
 export function Sidebar({ currentUsername }: { currentUsername: string }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -59,11 +22,16 @@ export function Sidebar({ currentUsername }: { currentUsername: string }) {
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [friendRequestsCount, setFriendRequestsCount] = useState<number>(0);
   const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
+  const [manualExpanded, setManualExpanded] = useState<boolean>(false);
 
   // Responsive window resize check to trigger icon collapse on smaller screens/overflow
   useEffect(() => {
     const handleResize = () => {
-      setIsCollapsed(window.innerWidth < 1024);
+      const smallScreen = window.innerWidth < 1024;
+      setIsCollapsed(smallScreen);
+      if (!smallScreen) {
+        setManualExpanded(false);
+      }
     };
     handleResize();
     window.addEventListener("resize", handleResize);
@@ -107,46 +75,91 @@ export function Sidebar({ currentUsername }: { currentUsername: string }) {
 
   const isActive = (path: string) => pathname === path;
   const isKingDavid = currentUsername.toLowerCase() === "kingdavid";
+  const isExpanded = manualExpanded || !isCollapsed;
 
   return (
-    <aside className={`group sticky top-6 self-start shrink-0 print:hidden z-50 transition-all duration-300 ${isCollapsed ? "w-16" : "w-56"}`}>
-      {isCollapsed && (
+    <aside className={`group sticky top-6 self-start shrink-0 print:hidden z-50 transition-all duration-300 ${!isExpanded ? "w-16" : "w-56"}`}>
+      {isCollapsed && !manualExpanded && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-2xs opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-300 z-10" />
       )}
 
       <div className={`bg-white p-2 rounded-xl border border-gray-200 shadow-sm flex flex-col gap-1.5 text-xs font-bold uppercase tracking-wider overflow-hidden transition-all duration-300 ease-in-out ${
-        isCollapsed 
+        !isExpanded 
           ? "w-16 group-hover:w-56 shadow-2xl z-20 relative" 
           : "w-56"
       }`}>
         
+        {/* Mobile / Touch Click-to-Expand Toggle Button */}
+        {isCollapsed && (
+          <button
+            onClick={() => setManualExpanded(!manualExpanded)}
+            title={manualExpanded ? "Collapse Menu" : "Expand Menu"}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 transition cursor-pointer mb-1 border border-amber-200"
+          >
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              {manualExpanded ? (
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              ) : (
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              )}
+            </svg>
+            <span className={`${!isExpanded ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>
+              {manualExpanded ? "Collapse" : "Menu"}
+            </span>
+          </button>
+        )}
+
         {/* Bank */}
         <button
-          onClick={() => router.push("/")}
+          onClick={() => { router.push("/"); setManualExpanded(false); }}
           title="Bank"
           className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition cursor-pointer ${isActive("/") ? "bg-[#e7b833] text-gray-900 font-black shadow-xs" : "bg-slate-100 hover:bg-slate-200 text-gray-700"}`}
         >
           <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11m16-11v11M8 14v3m4-3v3m4-3v3" />
           </svg>
-          <span className={`${isCollapsed ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Bank</span>
+          <span className={`${!isExpanded ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Bank</span>
         </button>
 
         {/* Profile */}
         <button
-          onClick={() => router.push("/profile")}
+          onClick={() => { router.push("/profile"); setManualExpanded(false); }}
           title="Profile"
           className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition cursor-pointer ${isActive("/profile") ? "bg-[#e7b833] text-gray-900 font-black shadow-xs" : "bg-slate-100 hover:bg-slate-200 text-gray-700"}`}
         >
           <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
           </svg>
-          <span className={`${isCollapsed ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Profile</span>
+          <span className={`${!isExpanded ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Profile</span>
+        </button>
+
+        {/* Gallery */}
+        <button
+          onClick={() => { router.push("/gallery"); setManualExpanded(false); }}
+          title="Gallery"
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition cursor-pointer ${isActive("/gallery") ? "bg-[#e7b833] text-gray-900 font-black shadow-xs" : "bg-slate-100 hover:bg-slate-200 text-gray-700"}`}
+        >
+          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
+          </svg>
+          <span className={`${!isExpanded ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Gallery</span>
+        </button>
+
+        {/* Messages */}
+        <button
+          onClick={() => { router.push("/messages"); setManualExpanded(false); }}
+          title="Messages"
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition cursor-pointer ${isActive("/messages") ? "bg-[#e7b833] text-gray-900 font-black shadow-xs" : "bg-slate-100 hover:bg-slate-200 text-gray-700"}`}
+        >
+          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
+          </svg>
+          <span className={`${!isExpanded ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Messages</span>
         </button>
 
         {/* Friends */}
         <button
-          onClick={() => router.push("/friends")}
+          onClick={() => { router.push("/friends"); setManualExpanded(false); }}
           title="Friends"
           className={`flex items-center justify-between px-3 py-2.5 rounded-lg transition cursor-pointer ${isActive("/friends") ? "bg-[#e7b833] text-gray-900 font-black shadow-xs" : "bg-slate-100 hover:bg-slate-200 text-gray-700"}`}
         >
@@ -154,7 +167,7 @@ export function Sidebar({ currentUsername }: { currentUsername: string }) {
             <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
             </svg>
-            <span className={`${isCollapsed ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Friends</span>
+            <span className={`${!isExpanded ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Friends</span>
           </div>
           {friendRequestsCount > 0 && (
             <span className="w-4 h-4 bg-rose-600 text-white rounded-full text-[9px] font-bold flex items-center justify-center shrink-0 shadow-xs ml-1">
@@ -163,46 +176,46 @@ export function Sidebar({ currentUsername }: { currentUsername: string }) {
           )}
         </button>
 
-        {/* Social */}
+        {/* Social (Hash Icon for Public Chat Rooms) */}
         <button
-          onClick={() => router.push("/social")}
+          onClick={() => { router.push("/social"); setManualExpanded(false); }}
           title="Social"
           className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition cursor-pointer ${isActive("/social") ? "bg-[#e7b833] text-gray-900 font-black shadow-xs" : "bg-slate-100 hover:bg-slate-200 text-gray-700"}`}
         >
-          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" />
+          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 9h13.5m-13.5 6h13.5m-7.5-12.75l-3 18.5m7.5-18.5l-3 18.5" />
           </svg>
-          <span className={`${isCollapsed ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Social</span>
+          <span className={`${!isExpanded ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Social</span>
+        </button>
+
+        {/* Streaming */}
+        <button
+          onClick={() => { router.push("/streaming"); setManualExpanded(false); }}
+          title="Streaming"
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition cursor-pointer ${isActive("/streaming") ? "bg-[#e7b833] text-gray-900 font-black shadow-xs" : "bg-slate-100 hover:bg-slate-200 text-gray-700"}`}
+        >
+          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9.348 14.652a3.75 3.75 0 0 1 0-5.304m5.304 0a3.75 3.75 0 0 1 0 5.304m-7.425 2.121a6.75 6.75 0 0 1 0-9.546m9.546 0a6.75 6.75 0 0 1 0 9.546M12 12.75h.008v.008H12v-.008Z" />
+          </svg>
+          <span className={`${!isExpanded ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Streaming</span>
         </button>
 
         {/* Members */}
         <button
-          onClick={() => router.push("/members")}
+          onClick={() => { router.push("/members"); setManualExpanded(false); }}
           title="Members"
           className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition cursor-pointer ${isActive("/members") ? "bg-[#e7b833] text-gray-900 font-black shadow-xs" : "bg-slate-100 hover:bg-slate-200 text-gray-700"}`}
         >
           <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.25m-15.686 0A8.959 8.959 0 0 1 3 12c0-.778.099-1.533.284-2.25m0 0A11.959 11.959 0 0 1 12 10.5c2.998 0 5.74 1.1 7.843 2.918" />
           </svg>
-          <span className={`${isCollapsed ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Members</span>
-        </button>
-
-        {/* Gallery */}
-        <button
-          onClick={() => router.push("/gallery")}
-          title="Gallery"
-          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition cursor-pointer ${isActive("/gallery") ? "bg-[#e7b833] text-gray-900 font-black shadow-xs" : "bg-slate-100 hover:bg-slate-200 text-gray-700"}`}
-        >
-          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
-          </svg>
-          <span className={`${isCollapsed ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Gallery</span>
+          <span className={`${!isExpanded ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Members</span>
         </button>
 
         {/* Applications (King David) */}
         {isKingDavid && (
           <button
-            onClick={() => router.push("/admin")}
+            onClick={() => { router.push("/admin"); setManualExpanded(false); }}
             title="Applications"
             className={`flex items-center justify-between px-3 py-2.5 rounded-lg transition cursor-pointer ${isActive("/admin") ? "bg-[#e7b833] text-gray-900 font-black shadow-xs" : "bg-slate-100 hover:bg-slate-200 text-gray-700"}`}
           >
@@ -210,7 +223,7 @@ export function Sidebar({ currentUsername }: { currentUsername: string }) {
               <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m-3 .75H6.75A2.25 2.25 0 0 1 4.5 16.5v-10.5A2.25 2.25 0 0 1 6.75 3.75h3.189a2.25 2.25 0 0 1 2.122 1.5H15.75A2.25 2.25 0 0 1 18 7.5v9a2.25 2.25 0 0 1-2.25 2.25h-3.75m-3-12.75V3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V4.5m-6 0h6" />
               </svg>
-              <span className={`${isCollapsed ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Applications</span>
+              <span className={`${!isExpanded ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Applications</span>
             </div>
             {pendingCount > 0 && (
               <span className="w-4 h-4 bg-rose-600 text-white rounded-full text-[9px] font-bold flex items-center justify-center shrink-0 shadow-xs ml-1">
@@ -219,10 +232,6 @@ export function Sidebar({ currentUsername }: { currentUsername: string }) {
             )}
           </button>
         )}
-
-        <div className="pt-2 border-t border-gray-100 flex items-center justify-center">
-          <SessionNavbarClock isCollapsed={isCollapsed} />
-        </div>
       </div>
     </aside>
   );
@@ -239,6 +248,7 @@ export default function Navbar({
   );
 
   const [showResetModal, setShowResetModal] = useState<boolean>(false);
+  const [showSignOutModal, setShowSignOutModal] = useState<boolean>(false);
   const [resetUserInput, setResetUserInput] = useState<string>("");
   const { resetSession } = useSessionTimer();
 
@@ -259,7 +269,8 @@ export default function Navbar({
     return () => observer.disconnect();
   }, []);
 
-  const handleSignOut = async () => {
+  const handleSignOutConfirm = async () => {
+    setShowSignOutModal(false);
     if (currentUsername) {
       try {
         const localToken = sessionStorage.getItem("socialtime_active_token") || "";
@@ -349,7 +360,7 @@ export default function Navbar({
 
   return (
     <>
-      <header className="bg-[#1e293b] text-white print:hidden">
+      <header className="bg-[#000000] text-white print:hidden">
         <div ref={headerContainerRef} className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-2 overflow-hidden">
           <div className="flex items-center space-x-1 shrink-0 min-w-0">
             <img src="/logo.png" alt="Social Time Logo" className="h-[52px] w-auto object-contain transform translate-y-[2px] shrink-0" />
@@ -360,9 +371,9 @@ export default function Navbar({
             </div>
           </div>
 
-          <div className="flex items-center space-x-3 text-sm shrink-0">
+          <div className="flex items-center space-x-2 text-sm shrink-0">
             {currentUsername === "KingDavid" && (
-              <div className="flex items-center gap-2 mr-2 border-r border-slate-700 pr-4">
+              <div className="flex items-center gap-2 mr-1 border-r border-zinc-800 pr-3">
                 <button
                   onClick={() => {
                     setResetUserInput("");
@@ -376,28 +387,91 @@ export default function Navbar({
               </div>
             )}
 
-            <div 
-              onClick={() => router.push("/profile")}
-              className="flex items-center justify-center space-x-2 bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 cursor-pointer hover:border-[#e7b833] transition"
-              title="View User Information & Signup Details"
-            >
-              <span className="text-xs text-gray-400">Account:</span>
-              <span className="text-white font-bold text-xs">@{currentUsername} {currentUsername === "KingDavid" ? "👑" : ""}</span>
+            {/* Username (Non-clickable) */}
+            <div className="flex items-center justify-center">
+              <span className="text-white font-bold text-xs tracking-wide">@{currentUsername} {currentUsername === "KingDavid" ? "👑" : ""}</span>
             </div>
 
+            {/* Divider */}
+            <span className="text-zinc-600 font-light">|</span>
+
+            {/* Settings Button */}
             <button
-              onClick={handleSignOut}
-              className="text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded transition cursor-pointer"
+              type="button"
+              title="Settings"
+              className="text-xs bg-zinc-700 hover:bg-zinc-600 text-white px-3.5 py-1.5 rounded-lg border border-zinc-500 transition cursor-pointer shadow-sm flex items-center justify-center"
             >
-              Sign Out
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+              </svg>
+            </button>
+
+            {/* Divider */}
+            <span className="text-zinc-600 font-light">|</span>
+
+            {/* Sign Out Button (switches to door exit icon on header overflow) */}
+            <button
+              onClick={() => setShowSignOutModal(true)}
+              title="Sign Out"
+              className="text-xs bg-zinc-700 hover:bg-zinc-600 text-white font-bold border border-zinc-500 px-3.5 py-1.5 rounded-lg transition cursor-pointer shadow-sm flex items-center justify-center"
+            >
+              {isHeaderOverflowed ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+              ) : (
+                "Sign Out"
+              )}
             </button>
           </div>
         </div>
         <div className="h-1.5 bg-[#e7b833] w-full" />
       </header>
 
+      {/* SIGN OUT CONFIRMATION MODAL */}
+      {showSignOutModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[100]">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-sm overflow-hidden transition-all text-left">
+            <div className="bg-[#000000] text-white p-4 flex justify-between items-center font-bold">
+              <h3 className="text-base font-bold text-white">Sign Out Confirmation</h3>
+              <button
+                onClick={() => setShowSignOutModal(false)}
+                className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="h-1 bg-[#e7b833]" />
+
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-gray-700 font-medium leading-relaxed">
+                This will end your current session! Are you sure?
+              </p>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSignOutModal(false)}
+                  className="w-1/2 py-2 rounded text-xs font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
+                >
+                  No
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSignOutConfirm}
+                  className="w-1/2 py-2 rounded text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
+                >
+                  Yes
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showResetModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[100]">
           <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all text-left">
             <div className="bg-[#800000] text-white p-4 flex justify-between items-center font-bold">
               <h3 className="text-base font-bold">⚠️ Reset Account Data</h3>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 
 const COUNTRIES = [
   "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda", "Argentina", "Armenia", "Australia", "Austria", "Azerbaijan",
@@ -271,11 +272,16 @@ export default function LoginPage() {
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1Y2lqemV4cHhzdXh2c253d3l1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5MzM2NjAsImV4cCI6MjEwNDUwOTY2MH0.Gr34yXf6UDlZq54nEKZAvaUCnfXla26LoVSH3YY5u1M"
   );
 
-  const [view, setView] = useState<"WELCOME" | "SIGNIN" | "SIGNUP">("WELCOME");
+  const [view, setView] = useState<"SIGNIN" | "SIGNUP">("SIGNIN");
+  const [loginStep, setLoginStep] = useState<"CREDENTIALS" | "PIN_VERIFY">("CREDENTIALS");
+  const [tempUserId, setTempUserId] = useState<string | null>(null);
 
   const [email, setEmail] = useState("");
-  const [pin, setPin] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [pin, setPin] = useState(""); // 6-digit 2FA PIN for signup/verification
   const [showPin, setShowPin] = useState(false);
+
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [username, setUsername] = useState("");
@@ -426,8 +432,8 @@ export default function LoginPage() {
         return;
       }
 
-      if (!firstName.trim() || !lastName.trim() || !username.trim() || !dob || !gender || !religion || !employmentStatus || !streetAddress1.trim() || !city.trim() || !stateProvince.trim() || !postcode.trim() || !email.trim() || !pin.trim()) {
-        setError("Please fill out all required address and account fields.");
+      if (!firstName.trim() || !lastName.trim() || !username.trim() || !dob || !gender || !religion || !employmentStatus || !streetAddress1.trim() || !city.trim() || !stateProvince.trim() || !postcode.trim() || !email.trim() || !password.trim() || !pin.trim()) {
+        setError("Please fill out all required address, password, and PIN fields.");
         setLoading(false);
         return;
       }
@@ -448,7 +454,7 @@ export default function LoginPage() {
 
       const pinRegex = /\D/;
       if (pinRegex.test(pin) || pin.length !== 6) {
-        setError("Security PIN must be exactly 6 digits (numbers only).");
+        setError("Security 2FA PIN must be exactly 6 digits (numbers only).");
         setPinError("Must be 6 digits.");
         setLoading(false);
         return;
@@ -522,9 +528,10 @@ export default function LoginPage() {
         return;
       }
 
+      // Register primary password with Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({ 
         email: cleanEmail, 
-        password: pin 
+        password: password.trim() 
       });
 
       if (authError) {
@@ -558,6 +565,7 @@ export default function LoginPage() {
           }
         }
 
+        // Store profile details including the 6-digit 2FA PIN with is_approved: false
         const { error: profileError } = await supabase.from("profiles").upsert({
           user_id: authData.user.id,
           username: username.trim(),
@@ -571,27 +579,67 @@ export default function LoginPage() {
           religion: religion,
           employment_status: employmentStatus,
           photo_url: publicPhotoUrl,
+          pin: pin.trim(),
           balance_cents: 0,
-          is_approved: false,
+          is_approved: false, // Locked until KingDavid approves
           accumulated_session_seconds: 0
         });
 
         if (profileError) {
           setError("Registration failed: " + profileError.message);
         } else {
-          alert("Application submitted successfully! Your account is pending review by KingDavid.");
-          setView("SIGNIN");
+          // Automatically sign in the newly registered user straight to dashboard
+          const newSessionId = `SESSION-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+          await supabase
+            .from("profiles")
+            .update({ active_session_id: newSessionId })
+            .eq("user_id", authData.user.id);
+
+          sessionStorage.setItem("socialtime_active_token", newSessionId);
+
+          router.push("/");
+          router.refresh();
         }
       }
     } else if (view === "SIGNIN") {
-      const { data, error } = await supabase.auth.signInWithPassword({ 
-        email: email.trim(), 
-        password: pin 
-      });
-      
-      if (error) {
-        setError(error.message);
-      } else if (data.session) {
+      if (loginStep === "CREDENTIALS") {
+        // Step 1: Authenticate primary password with Supabase Auth
+        const { data, error } = await supabase.auth.signInWithPassword({ 
+          email: email.trim(), 
+          password: password.trim() 
+        });
+        
+        if (error) {
+          setError(error.message);
+          setLoading(false);
+          return;
+        }
+
+        if (data.session && data.user) {
+          setTempUserId(data.user.id);
+          setLoginStep("PIN_VERIFY");
+          setError("");
+        }
+      } else if (loginStep === "PIN_VERIFY") {
+        // Step 2: Verify 6-digit 2FA PIN via secure RPC
+        if (!tempUserId || pin.length !== 6) {
+          setError("Please enter your valid 6-digit 2FA PIN.");
+          setLoading(false);
+          return;
+        }
+
+        const { data: isPinValid, error: rpcError } = await supabase.rpc("verify_user_pin", {
+          entered_pin: pin.trim()
+        });
+
+        if (rpcError || !isPinValid) {
+          setError("Incorrect 2FA PIN. Access denied.");
+          setLoading(false);
+          return;
+        }
+
+        // PIN is correct! Register active session and proceed to dashboard
         const newSessionId = `SESSION-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
         const { error: updateError } = await supabase
@@ -599,7 +647,7 @@ export default function LoginPage() {
           .update({ 
             active_session_id: newSessionId
           })
-          .eq("user_id", data.session.user.id);
+          .eq("user_id", tempUserId);
 
         if (updateError) {
           setError("Session registration failed: " + updateError.message);
@@ -607,7 +655,6 @@ export default function LoginPage() {
           return;
         }
 
-        // FIX: Use sessionStorage to match SessionTimerProvider isolation rules
         sessionStorage.setItem("socialtime_active_token", newSessionId);
 
         router.push("/");
@@ -618,330 +665,326 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#1e293b] flex items-center justify-center p-4 font-sans">
-      <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-lg p-8 space-y-6">
+    <div className="min-h-screen bg-white flex items-center justify-center p-4 font-sans relative overflow-hidden">
+      <div className="bg-black rounded-2xl shadow-2xl border border-zinc-800 w-full max-w-lg p-8 space-y-6 relative z-10 text-white">
         
-        {view === "WELCOME" && (
-          <div className="text-center space-y-6 py-6">
-            <div className="w-16 h-16 bg-blue-600 rounded-xl flex items-center justify-center rotate-45 mx-auto shadow-lg mb-4">
-              <div className="w-7 h-7 bg-[#1e293b] -rotate-45 rounded-xs" />
+        <div className="flex items-start justify-between border-b border-zinc-800 pb-4">
+          <div className="flex items-start gap-3">
+            <div className="relative w-10 h-10 shrink-0">
+              <Image src="/logo.png" alt="Logo" fill sizes="40px" className="object-contain" />
             </div>
-
-            <div className="space-y-2">
-              <h1 className="text-2xl font-black text-gray-900 tracking-wider uppercase">Social Time</h1>
-              <p className="text-xs text-gray-500 font-medium">Time well spent, together.</p>
+            <div>
+              <h1 className="text-lg font-black text-white tracking-wider">SOCIAL TIME</h1>
+              <p className="text-[10px] text-white block italic mt-0.5">&quot;Spending time, together.&quot;</p>
             </div>
+          </div>
+          <div className="text-xs font-bold text-white tracking-wide shrink-0 pt-1">
+            {view === "SIGNUP" ? "REGISTRATION FORM" : loginStep === "PIN_VERIFY" ? "2FA VERIFICATION" : "SECURE LOGIN"}
+          </div>
+        </div>
 
-            <div className="space-y-4 pt-4">
-              <button
-                type="button"
-                onClick={() => { setError(""); setView("SIGNUP"); }}
-                className="w-full py-4 rounded-xl text-sm font-black bg-blue-600 hover:bg-blue-700 text-white shadow-lg transition cursor-pointer flex items-center justify-center gap-2 uppercase tracking-wide"
-              >
-                <span>✨ Register New User Account</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => { setError(""); setView("SIGNIN"); }}
-                className="w-full py-4 rounded-xl text-sm font-black bg-slate-800 hover:bg-slate-900 text-white shadow-lg transition cursor-pointer flex items-center justify-center gap-2 uppercase tracking-wide"
-              >
-                <span>🔐 Client Login Portal</span>
-              </button>
-            </div>
+        {error && (
+          <div className="bg-rose-950/60 border border-rose-800 text-rose-300 text-xs p-3 rounded font-medium">
+            {error}
           </div>
         )}
 
-        {view !== "WELCOME" && (
-          <>
-            <div className="flex items-center justify-between border-b border-gray-100 pb-4">
+        <form onSubmit={handleAuth} className="space-y-4">
+          {view === "SIGNUP" && (
+            <>
+              {/* Profile Identity Photo Upload Box at the Very Top */}
+              <div className="flex flex-col items-center justify-center pb-2 border-b border-zinc-800">
+                <div className="mb-2 text-center">
+                  <label className="block text-[11px] font-bold text-gray-300 uppercase tracking-tight">PROFILE IDENTITY PHOTO</label>
+                </div>
+                <label className={`relative w-28 h-36 border-2 border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer bg-zinc-700 transition overflow-hidden group ${
+                  photoError ? "border-rose-500 bg-rose-950/30" : "border-zinc-500 hover:border-[#e7b833] hover:bg-zinc-600"
+                }`}>
+                  {photoPreview ? (
+                    <img src={photoPreview} alt="Profile Identity Preview" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="text-center p-2">
+                      <svg className={`w-8 h-8 mx-auto mb-1 transition ${photoError ? "text-rose-400 group-hover:text-rose-500" : "text-gray-300 group-hover:text-[#e7b833]"}`} fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+                      </svg>
+                      <span className={`text-[10px] font-semibold block leading-tight ${photoError ? "text-rose-400" : "text-gray-300"}`}>Upload Photo</span>
+                    </div>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handlePhotoChange}
+                    className="absolute inset-0 opacity-0 cursor-pointer"
+                  />
+                </label>
+                <span className="text-[10px] text-gray-400 mt-1">Clear face portrait (JPEG, PNG)</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[11px] font-bold text-gray-300 uppercase">Legal First Name</label>
+                    {firstNameError && (
+                      <span className="text-[10px] font-bold text-rose-400">{firstNameError}</span>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    value={firstName}
+                    onChange={(e) => {
+                      setFirstName(e.target.value);
+                      if (firstNameError) setFirstNameError("");
+                    }}
+                    onBlur={checkFirstName}
+                    placeholder="John"
+                    className={`w-full border rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 ${
+                      firstNameError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
+                    }`}
+                  />
+                </div>
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[11px] font-bold text-gray-300 uppercase">Legal Last Name</label>
+                    {lastNameError && (
+                      <span className="text-[10px] font-bold text-rose-400">{lastNameError}</span>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    value={lastName}
+                    onChange={(e) => {
+                      setLastName(e.target.value);
+                      if (lastNameError) setLastNameError("");
+                    }}
+                    onBlur={checkLastName}
+                    placeholder="Smith"
+                    className={`w-full border rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 ${
+                      lastNameError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
+                    }`}
+                  />
+                </div>
+              </div>
+
               <div>
-                <h1 className="text-lg font-black text-gray-900 tracking-wider">SOCIAL TIME</h1>
-                <p className="text-[11px] text-gray-500 uppercase font-semibold mt-0.5">
-                  {view === "SIGNUP" ? "New Account Application" : "Secure Client Portal Login"}
-                </p>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-[11px] font-bold text-gray-300 uppercase">Username (Payment ID)</label>
+                  {usernameError && (
+                    <span className="text-[10px] font-bold text-rose-400">{usernameError}</span>
+                  )}
+                </div>
+                <input
+                  type="text"
+                  required
+                  maxLength={20}
+                  value={username}
+                  onChange={(e) => {
+                    setUsername(e.target.value);
+                    if (usernameError) setUsernameError("");
+                  }}
+                  onBlur={checkUsernameAvailability}
+                  placeholder="johnsmith"
+                  className={`w-full border rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 ${
+                    usernameError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
+                  }`}
+                />
               </div>
-              <button
-                type="button"
-                onClick={() => { setError(""); setView("WELCOME"); }}
-                className="text-xs text-blue-600 font-semibold hover:underline cursor-pointer"
-              >
-                ← Back to Welcome
-              </button>
-            </div>
 
-            {error && (
-              <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs p-3 rounded font-medium">
-                {error}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-300 uppercase mb-1">Date of Birth</label>
+                  <input
+                    type="date"
+                    required
+                    value={dob}
+                    onChange={(e) => setDob(e.target.value)}
+                    className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-300 uppercase mb-1">Gender</label>
+                  <select
+                    required
+                    value={gender}
+                    onChange={(e) => setGender(e.target.value)}
+                    className="w-full border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer"
+                  >
+                    <option value="">Select Gender</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                  </select>
+                </div>
               </div>
-            )}
 
-            <form onSubmit={handleAuth} className="space-y-4">
-              {view === "SIGNUP" && (
-                <>
-                  {/* Profile Identity Photo Upload Box at the Very Top */}
-                  <div className="flex flex-col items-center justify-center pb-2 border-b border-gray-100">
-                    <div className="mb-2 text-center">
-                      <label className="block text-[11px] font-bold text-gray-700 uppercase tracking-tight">PROFILE IDENTITY PHOTO</label>
-                    </div>
-                    <label className={`relative w-28 h-36 border-2 border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer bg-gray-50 transition overflow-hidden group ${
-                      photoError ? "border-rose-500 bg-rose-50/20" : "border-gray-300 hover:border-blue-500 hover:bg-blue-50/20"
-                    }`}>
-                      {photoPreview ? (
-                        <img src={photoPreview} alt="Profile Identity Preview" className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="text-center p-2">
-                          <svg className={`w-8 h-8 mx-auto mb-1 transition ${photoError ? "text-rose-400 group-hover:text-rose-500" : "text-gray-400 group-hover:text-blue-500"}`} fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-                          </svg>
-                          <span className={`text-[10px] font-semibold block leading-tight ${photoError ? "text-rose-500" : "text-gray-500"}`}>Upload Photo</span>
-                        </div>
-                      )}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handlePhotoChange}
-                        className="absolute inset-0 opacity-0 cursor-pointer"
-                      />
-                    </label>
-                    <span className="text-[10px] text-gray-400 mt-1">Clear face portrait (JPEG, PNG)</span>
-                  </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-300 uppercase mb-1">Religion</label>
+                  <select
+                    required
+                    value={religion}
+                    onChange={(e) => setReligion(e.target.value)}
+                    className="w-full border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer"
+                  >
+                    <option value="">Select Religion</option>
+                    {RELIGIONS.map((r) => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-300 uppercase mb-1">Employment Status</label>
+                  <select
+                    required
+                    value={employmentStatus}
+                    onChange={(e) => setEmploymentStatus(e.target.value)}
+                    className="w-full border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer"
+                  >
+                    <option value="">Select Status</option>
+                    <option value="Employed">Employed</option>
+                    <option value="Unemployed">Unemployed</option>
+                    <option value="Student">Student</option>
+                  </select>
+                </div>
+              </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="block text-[11px] font-bold text-gray-700 uppercase">Legal First Name</label>
-                        {firstNameError && (
-                          <span className="text-[10px] font-bold text-rose-600">{firstNameError}</span>
-                        )}
-                      </div>
-                      <input
-                        type="text"
-                        required
-                        value={firstName}
-                        onChange={(e) => {
-                          setFirstName(e.target.value);
-                          if (firstNameError) setFirstNameError("");
-                        }}
-                        onBlur={checkFirstName}
-                        placeholder="John"
-                        className={`w-full border rounded p-2 text-xs text-black focus:outline-none font-medium placeholder:text-gray-300 ${
-                          firstNameError ? "border-rose-500 bg-rose-50/30 focus:border-rose-600" : "border-gray-300 focus:border-blue-600"
-                        }`}
-                      />
-                    </div>
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="block text-[11px] font-bold text-gray-700 uppercase">Legal Last Name</label>
-                        {lastNameError && (
-                          <span className="text-[10px] font-bold text-rose-600">{lastNameError}</span>
-                        )}
-                      </div>
-                      <input
-                        type="text"
-                        required
-                        value={lastName}
-                        onChange={(e) => {
-                          setLastName(e.target.value);
-                          if (lastNameError) setLastNameError("");
-                        }}
-                        onBlur={checkLastName}
-                        placeholder="Smith"
-                        className={`w-full border rounded p-2 text-xs text-black focus:outline-none font-medium placeholder:text-gray-300 ${
-                          lastNameError ? "border-rose-500 bg-rose-50/30 focus:border-rose-600" : "border-gray-300 focus:border-blue-600"
-                        }`}
-                      />
-                    </div>
-                  </div>
+              <div>
+                <label className="block text-[11px] font-bold text-gray-300 uppercase mb-1">Mobile Phone</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <select
+                    value={phoneCode}
+                    onChange={(e) => setPhoneCode(e.target.value)}
+                    className="border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer"
+                  >
+                    {COUNTRY_DIAL_CODES.map((item, index) => (
+                      <option key={`${item.code}-${index}`} value={item.code}>
+                        {item.code} ({item.country})
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="tel"
+                    value={mobileNumber}
+                    onChange={(e) => setMobileNumber(e.target.value)}
+                    placeholder="Number"
+                    className="col-span-2 border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium placeholder:text-zinc-400"
+                  />
+                </div>
+              </div>
 
+              {/* Standardized International Address Fields */}
+              <div className="space-y-3 pt-2 border-t border-zinc-800">
+                <span className="block text-[11px] font-extrabold text-gray-200 uppercase tracking-wide">Residential Address</span>
+                
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Street Address / Line 1</label>
+                  <input
+                    type="text"
+                    required
+                    value={streetAddress1}
+                    onChange={(e) => setStreetAddress1(e.target.value)}
+                    placeholder="Street number and name"
+                    className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium placeholder:text-zinc-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Apartment, Suite, Unit, Building (Optional)</label>
+                  <input
+                    type="text"
+                    value={streetAddress2}
+                    onChange={(e) => setStreetAddress2(e.target.value)}
+                    placeholder="Apt, Suite, Floor, etc."
+                    className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium placeholder:text-zinc-400"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <label className="block text-[11px] font-bold text-gray-700 uppercase">Username (Payment ID)</label>
-                      {usernameError && (
-                        <span className="text-[10px] font-bold text-rose-600">{usernameError}</span>
-                      )}
-                    </div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">City / Town / Suburb</label>
                     <input
                       type="text"
                       required
-                      maxLength={20}
-                      value={username}
-                      onChange={(e) => {
-                        setUsername(e.target.value);
-                        if (usernameError) setUsernameError("");
-                      }}
-                      onBlur={checkUsernameAvailability}
-                      placeholder="johnsmith"
-                      className={`w-full border rounded p-2 text-xs text-black focus:outline-none font-medium placeholder:text-gray-300 ${
-                        usernameError ? "border-rose-500 bg-rose-50/30 focus:border-rose-600" : "border-gray-300 focus:border-blue-600"
-                      }`}
+                      value={city}
+                      onChange={(e) => setCity(e.target.value)}
+                      className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium"
                     />
                   </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-700 uppercase mb-1">Date of Birth</label>
-                      <input
-                        type="date"
-                        required
-                        value={dob}
-                        onChange={(e) => setDob(e.target.value)}
-                        className="w-full border border-gray-300 rounded p-2 text-xs text-black focus:outline-none focus:border-blue-600 font-medium"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-700 uppercase mb-1">Gender</label>
-                      <select
-                        required
-                        value={gender}
-                        onChange={(e) => setGender(e.target.value)}
-                        className="w-full border border-gray-300 rounded p-2 text-xs text-black bg-white focus:outline-none focus:border-blue-600 font-medium cursor-pointer"
-                      >
-                        <option value="">Select Gender</option>
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-700 uppercase mb-1">Religion</label>
-                      <select
-                        required
-                        value={religion}
-                        onChange={(e) => setReligion(e.target.value)}
-                        className="w-full border border-gray-300 rounded p-2 text-xs text-black bg-white focus:outline-none focus:border-blue-600 font-medium cursor-pointer"
-                      >
-                        <option value="">Select Religion</option>
-                        {RELIGIONS.map((r) => (
-                          <option key={r} value={r}>{r}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-700 uppercase mb-1">Employment Status</label>
-                      <select
-                        required
-                        value={employmentStatus}
-                        onChange={(e) => setEmploymentStatus(e.target.value)}
-                        className="w-full border border-gray-300 rounded p-2 text-xs text-black bg-white focus:outline-none focus:border-blue-600 font-medium cursor-pointer"
-                      >
-                        <option value="">Select Status</option>
-                        <option value="Employed">Employed</option>
-                        <option value="Unemployed">Unemployed</option>
-                        <option value="Student">Student</option>
-                      </select>
-                    </div>
-                  </div>
-
                   <div>
-                    <label className="block text-[11px] font-bold text-gray-700 uppercase mb-1">Mobile Phone</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      <select
-                        value={phoneCode}
-                        onChange={(e) => setPhoneCode(e.target.value)}
-                        className="border border-gray-300 rounded p-2 text-xs text-black bg-white focus:outline-none focus:border-blue-600 font-medium cursor-pointer"
-                      >
-                        {COUNTRY_DIAL_CODES.map((item, index) => (
-                          <option key={`${item.code}-${index}`} value={item.code}>
-                            {item.code} ({item.country})
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="tel"
-                        value={mobileNumber}
-                        onChange={(e) => setMobileNumber(e.target.value)}
-                        placeholder="Number"
-                        className="col-span-2 border border-gray-300 rounded p-2 text-xs text-black focus:outline-none focus:border-blue-600 font-medium placeholder:text-gray-300"
-                      />
-                    </div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">State / Province / Region</label>
+                    <input
+                      type="text"
+                      required
+                      value={stateProvince}
+                      onChange={(e) => setStateProvince(e.target.value)}
+                      className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium"
+                    />
                   </div>
+                </div>
 
-                  {/* Standardized International Address Fields */}
-                  <div className="space-y-3 pt-2 border-t border-gray-100">
-                    <span className="block text-[11px] font-extrabold text-gray-800 uppercase tracking-wide">Residential Address</span>
-                    
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-600 uppercase mb-1">Street Address / Line 1</label>
-                      <input
-                        type="text"
-                        required
-                        value={streetAddress1}
-                        onChange={(e) => setStreetAddress1(e.target.value)}
-                        placeholder="Street number and name"
-                        className="w-full border border-gray-300 rounded p-2 text-xs text-black focus:outline-none focus:border-blue-600 font-medium placeholder:text-gray-300"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-600 uppercase mb-1">Apartment, Suite, Unit, Building (Optional)</label>
-                      <input
-                        type="text"
-                        value={streetAddress2}
-                        onChange={(e) => setStreetAddress2(e.target.value)}
-                        placeholder="Apt, Suite, Floor, etc."
-                        className="w-full border border-gray-300 rounded p-2 text-xs text-black focus:outline-none focus:border-blue-600 font-medium placeholder:text-gray-300"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-600 uppercase mb-1">City / Town / Suburb</label>
-                        <input
-                          type="text"
-                          required
-                          value={city}
-                          onChange={(e) => setCity(e.target.value)}
-                          className="w-full border border-gray-300 rounded p-2 text-xs text-black focus:outline-none focus:border-blue-600 font-medium"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-600 uppercase mb-1">State / Province / Region</label>
-                        <input
-                          type="text"
-                          required
-                          value={stateProvince}
-                          onChange={(e) => setStateProvince(e.target.value)}
-                          className="w-full border border-gray-300 rounded p-2 text-xs text-black focus:outline-none focus:border-blue-600 font-medium"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-600 uppercase mb-1">Postal Code / ZIP</label>
-                        <input
-                          type="text"
-                          required
-                          value={postcode}
-                          onChange={(e) => setPostcode(e.target.value)}
-                          className="w-full border border-gray-300 rounded p-2 text-xs text-black focus:outline-none focus:border-blue-600 font-medium"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-600 uppercase mb-1">Country</label>
-                        <select
-                          value={country}
-                          onChange={(e) => setCountry(e.target.value)}
-                          className="w-full border border-gray-300 rounded p-2 text-xs text-black bg-white focus:outline-none focus:border-blue-600 font-medium cursor-pointer"
-                        >
-                          {COUNTRIES.map((c, index) => (
-                            <option key={`${c}-${index}`} value={c}>{c}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Postal Code / ZIP</label>
+                    <input
+                      type="text"
+                      required
+                      value={postcode}
+                      onChange={(e) => setPostcode(e.target.value)}
+                      className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium"
+                    />
                   </div>
-                </>
-              )}
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Country</label>
+                    <select
+                      value={country}
+                      onChange={(e) => setCountry(e.target.value)}
+                      className="w-full border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer"
+                    >
+                      {COUNTRIES.map((c, index) => (
+                        <option key={`${c}-${index}`} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
 
-              <div className="pt-2 border-t border-gray-100">
+          {/* Step 1: Credentials (Email + Password) or Step 2: 2FA PIN Verification */}
+          {view === "SIGNIN" && loginStep === "PIN_VERIFY" ? (
+            <div className="space-y-4 pt-2">
+              <div className="bg-zinc-900 border border-zinc-700 text-amber-300 text-xs p-3 rounded font-medium">
+                Please enter your 6-digit security PIN to complete authentication.
+              </div>
+              <div>
                 <div className="flex justify-between items-center mb-1">
-                  <label className="block text-[11px] font-bold text-gray-700 uppercase">Email Address</label>
+                  <label className="block text-[11px] font-bold text-gray-300 uppercase">6-Digit Security PIN</label>
+                  {pinError && (
+                    <span className="text-[10px] font-bold text-rose-400">{pinError}</span>
+                  )}
+                </div>
+                <input
+                  type={showPin ? "text" : "password"}
+                  required
+                  maxLength={6}
+                  value={pin}
+                  onChange={(e) => {
+                    setPin(e.target.value);
+                    if (pinError) setPinError("");
+                  }}
+                  onBlur={checkPin}
+                  placeholder="••••••"
+                  className="w-full border border-zinc-500 bg-zinc-700 rounded p-2.5 text-center text-white text-lg tracking-widest font-mono focus:outline-none focus:border-[#e7b833]"
+                />
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="pt-2 border-t border-zinc-800">
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-[11px] font-bold text-gray-300 uppercase">Email Address</label>
                   {emailError && (
-                    <span className="text-[10px] font-bold text-rose-600">{emailError}</span>
+                    <span className="text-[10px] font-bold text-rose-400">{emailError}</span>
                   )}
                 </div>
                 <input
@@ -954,44 +997,34 @@ export default function LoginPage() {
                   }}
                   onBlur={() => {
                     checkEmail();
-                    checkEmailAvailability();
+                    if (view === "SIGNUP") checkEmailAvailability();
                   }}
                   placeholder="john.smith@example.com"
-                  className={`w-full border rounded p-2.5 text-xs text-black focus:outline-none font-medium placeholder:text-gray-300 ${
-                    emailError ? "border-rose-500 bg-rose-50/30 focus:border-rose-600" : "border-gray-300 focus:border-blue-600"
+                  className={`w-full border rounded p-2.5 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 ${
+                    emailError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
                   }`}
                 />
               </div>
 
               <div>
                 <div className="flex justify-between items-center mb-1">
-                  <label className="block text-[11px] font-bold text-gray-700 uppercase">Security PIN (6 digits)</label>
-                  {pinError && (
-                    <span className="text-[10px] font-bold text-rose-600">{pinError}</span>
-                  )}
+                  <label className="block text-[11px] font-bold text-gray-300 uppercase">Password</label>
                 </div>
                 <div className="relative">
                   <input
-                    type={showPin ? "text" : "password"}
+                    type={showPassword ? "text" : "password"}
                     required
-                    maxLength={6}
-                    value={pin}
-                    onChange={(e) => {
-                      setPin(e.target.value);
-                      if (pinError) setPinError("");
-                    }}
-                    onBlur={checkPin}
-                    placeholder="••••••"
-                    className={`w-full border rounded p-2.5 pr-10 text-xs text-black focus:outline-none font-mono tracking-widest placeholder:text-gray-300 ${
-                      pinError ? "border-rose-500 bg-rose-50/30 focus:border-rose-600" : "border-gray-300 focus:border-blue-600"
-                    }`}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter password"
+                    className="w-full border border-zinc-500 bg-zinc-700 rounded p-2.5 pr-10 text-xs text-white focus:outline-none font-medium placeholder:text-zinc-400 focus:border-[#e7b833]"
                   />
                   <button
                     type="button"
-                    onClick={() => setShowPin(!showPin)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-none cursor-pointer"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white focus:outline-none cursor-pointer"
                   >
-                    {showPin ? (
+                    {showPassword ? (
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
                       </svg>
@@ -1005,36 +1038,80 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-3.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white shadow-md transition cursor-pointer uppercase tracking-wider"
-              >
-                {loading ? "Processing..." : view === "SIGNUP" ? "Submit Account Application" : "Sign In to Dashboard"}
-              </button>
-            </form>
-
-            <div className="text-center pt-2">
-              {view === "SIGNUP" ? (
-                <button
-                  type="button"
-                  onClick={() => { setError(""); setView("SIGNIN"); }}
-                  className="text-xs text-blue-600 hover:underline cursor-pointer font-medium"
-                >
-                  Already have an account? Sign in here
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => { setError(""); setView("SIGNUP"); }}
-                  className="text-xs text-blue-600 hover:underline cursor-pointer font-medium"
-                >
-                  Need an account? Register here
-                </button>
+              {view === "SIGNUP" && (
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[11px] font-bold text-gray-300 uppercase">Security 2FA PIN (6 digits)</label>
+                    {pinError && (
+                      <span className="text-[10px] font-bold text-rose-400">{pinError}</span>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showPin ? "text" : "password"}
+                      required
+                      maxLength={6}
+                      value={pin}
+                      onChange={(e) => {
+                        setPin(e.target.value);
+                        if (pinError) setPinError("");
+                      }}
+                      onBlur={checkPin}
+                      placeholder="••••••"
+                      className={`w-full border rounded p-2.5 pr-10 text-xs text-white bg-zinc-700 focus:outline-none font-mono tracking-widest placeholder:text-zinc-400 ${
+                        pinError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPin(!showPin)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white focus:outline-none cursor-pointer"
+                    >
+                      {showPin ? (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
               )}
-            </div>
-          </>
-        )}
+            </>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3.5 rounded-xl text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] disabled:opacity-50 text-gray-900 shadow-md transition cursor-pointer uppercase tracking-wider"
+          >
+            {loading ? "Processing..." : view === "SIGNUP" ? "Submit Account Application" : loginStep === "PIN_VERIFY" ? "Complete Sign In" : "Sign In to Dashboard"}
+          </button>
+        </form>
+
+        <div className="text-center pt-2">
+          {view === "SIGNUP" ? (
+            <button
+              type="button"
+              onClick={() => { setError(""); setView("SIGNIN"); setLoginStep("CREDENTIALS"); }}
+              className="text-xs text-[#e7b833] hover:underline cursor-pointer font-medium"
+            >
+              Already have an account? Sign in here
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => { setError(""); setView("SIGNUP"); setLoginStep("CREDENTIALS"); }}
+              className="text-xs text-[#e7b833] hover:underline cursor-pointer font-medium"
+            >
+              Need an account? Register here
+            </button>
+          )}
+        </div>
 
       </div>
     </div>
