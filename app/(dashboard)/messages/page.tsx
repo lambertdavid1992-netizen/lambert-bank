@@ -11,12 +11,18 @@ interface Message {
   recipient_username: string;
   content: string;
   created_at: string;
+  is_read?: boolean;
+  reactions?: Record<string, string>;
 }
 
 interface MemberProfile {
   username: string;
   photo_url?: string;
+  unreadCount?: number;
 }
+
+const QUICK_EMOJIS = ["😊", "👍", "❤️", "🔥", "🎉", "😂", "🙏", "✨", "🚀", "👑"];
+const REACTION_EMOJIS = ["❤️", "👍", "😂", "😮", "😢", "🔥"];
 
 export default function MessagesPage() {
   const router = useRouter();
@@ -28,9 +34,8 @@ export default function MessagesPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [currentUsername, setCurrentUsername] = useState<string>("");
   const [isApproved, setIsApproved] = useState<boolean>(false);
-  const [friends, setFriends] = useState<MemberProfile[]>([]);
+  const [conversations, setConversations] = useState<MemberProfile[]>([]);
   
-  // Search state for finding any member (Approved users only)
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [searchResults, setSearchResults] = useState<MemberProfile[]>([]);
   const [isSearching, setIsSearching] = useState<boolean>(false);
@@ -38,11 +43,83 @@ export default function MessagesPage() {
   const [selectedFriend, setSelectedFriend] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState<string>("");
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState<boolean>(false);
+  
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch current user, approval status, and conversation list on mount
+  // Initialize user and conversation threads with unread counts
+  const loadConversations = useCallback(async (username: string, approved: boolean) => {
+    try {
+      const contactSet = new Set<string>();
+
+      if (!approved) {
+        contactSet.add("KingDavid");
+      } else {
+        const { data: friendships } = await supabase
+          .from("friendships")
+          .select("sender_username, receiver_username")
+          .eq("status", "accepted")
+          .or(`sender_username.eq.${username},receiver_username.eq.${username}`);
+
+        friendships?.forEach((f) => {
+          const friendName = f.sender_username.toLowerCase() === username.toLowerCase() ? f.receiver_username : f.sender_username;
+          contactSet.add(friendName);
+        });
+
+        const { data: msgHistory } = await supabase
+          .from("messages")
+          .select("sender_username, recipient_username")
+          .or(`sender_username.eq.${username},recipient_username.eq.${username}`);
+
+        msgHistory?.forEach((m) => {
+          const partner = m.sender_username.toLowerCase() === username.toLowerCase() ? m.recipient_username : m.sender_username;
+          contactSet.add(partner);
+        });
+      }
+
+      const usernames = Array.from(contactSet);
+      if (usernames.length > 0) {
+        const { data: profilesData } = await supabase
+          .from("profiles")
+          .select("username, photo_url")
+          .in("username", usernames);
+
+        // Fetch unread counts per sender
+        const { data: unreadData } = await supabase
+          .from("messages")
+          .select("sender_username")
+          .eq("recipient_username", username)
+          .eq("is_read", false);
+
+        const unreadMap: Record<string, number> = {};
+        unreadData?.forEach((m) => {
+          unreadMap[m.sender_username] = (unreadMap[m.sender_username] || 0) + 1;
+        });
+
+        if (profilesData) {
+          const profilesWithUnread = profilesData.map((p) => ({
+            ...p,
+            unreadCount: unreadMap[p.username] || 0,
+          }));
+          setConversations(profilesWithUnread);
+
+          if (!selectedFriend && window.innerWidth >= 768 && profilesWithUnread.length > 0) {
+            setSelectedFriend(profilesWithUnread[0].username);
+          }
+        }
+      } else {
+        setConversations([{ username: "KingDavid", unreadCount: 0 }]);
+        if (!selectedFriend && window.innerWidth >= 768) {
+          setSelectedFriend("KingDavid");
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load conversations:", err);
+    }
+  }, [supabase, selectedFriend]);
+
   useEffect(() => {
-    async function initUserAndFriends() {
+    async function init() {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) {
@@ -75,56 +152,18 @@ export default function MessagesPage() {
         setCurrentUsername(username);
         setIsApproved(approved);
 
-        if (!approved) {
-          // Pending users are restricted exclusively to communicating with KingDavid
-          const { data: kdProfile } = await supabase
-            .from("profiles")
-            .select("username, photo_url")
-            .ilike("username", "KingDavid")
-            .single();
-
-          const kingDavidUser = kdProfile || { username: "KingDavid" };
-          setFriends([kingDavidUser]);
-          setSelectedFriend("KingDavid");
-        } else {
-          // Fetch accepted friendships for approved users
-          const { data: friendships } = await supabase
-            .from("friendships")
-            .select("sender_username, receiver_username")
-            .eq("status", "accepted")
-            .or(`sender_username.eq.${username},receiver_username.eq.${username}`);
-
-          if (friendships) {
-            const friendNames = friendships.map((f) =>
-              f.sender_username.toLowerCase() === username.toLowerCase()
-                ? f.receiver_username
-                : f.sender_username
-            );
-
-            if (friendNames.length > 0) {
-              const { data: profilesData } = await supabase
-                .from("profiles")
-                .select("username, photo_url")
-                .in("username", friendNames);
-
-              if (profilesData) {
-                setFriends(profilesData);
-                setSelectedFriend(profilesData[0].username);
-              }
-            }
-          }
-        }
+        await loadConversations(username, approved);
       } catch (err) {
-        console.error("Failed to initialize messages:", err);
+        console.error("Initialization failed:", err);
       } finally {
         setLoading(false);
       }
     }
 
-    initUserAndFriends();
-  }, [router, supabase]);
+    init();
+  }, [router, supabase, loadConversations]);
 
-  // Global Member Search Effect (Locked for pending members)
+  // Global member search for approved users
   useEffect(() => {
     if (!isApproved) {
       setSearchResults([]);
@@ -157,7 +196,7 @@ export default function MessagesPage() {
     return () => clearTimeout(timer);
   }, [searchQuery, currentUsername, supabase, isApproved]);
 
-  // Fetch chat history with selected member
+  // Fetch messages and mark them as read in DB
   const fetchMessages = useCallback(async (targetUser: string) => {
     if (!currentUsername || !targetUser) return;
 
@@ -171,6 +210,19 @@ export default function MessagesPage() {
 
     if (!error && data) {
       setMessages(data);
+
+      // Mark unread messages from this user as read
+      await supabase
+        .from("messages")
+        .update({ is_read: true })
+        .eq("sender_username", targetUser)
+        .eq("recipient_username", currentUsername)
+        .eq("is_read", false);
+
+      // Clear unread badge locally immediately
+      setConversations((prev) =>
+        prev.map((c) => (c.username.toLowerCase() === targetUser.toLowerCase() ? { ...c, unreadCount: 0 } : c))
+      );
     }
   }, [currentUsername, supabase]);
 
@@ -180,27 +232,41 @@ export default function MessagesPage() {
     }
   }, [selectedFriend, fetchMessages]);
 
-  // Realtime subscription for incoming messages
+  // Realtime subscription for incoming messages, read updates, and reactions
   useEffect(() => {
-    if (!currentUsername || !selectedFriend) return;
+    if (!currentUsername) return;
 
     const channel = supabase
-      .channel(`chat-${currentUsername}-${selectedFriend}`)
+      .channel(`chat-global-${currentUsername}`)
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
           table: "messages",
         },
-        (payload) => {
-          const newMsg = payload.new as Message;
+        async (payload) => {
+          const msg = payload.new as Message;
           if (
-            (newMsg.sender_username === currentUsername && newMsg.recipient_username === selectedFriend) ||
-            (newMsg.sender_username === selectedFriend && newMsg.recipient_username === currentUsername)
+            (msg.sender_username === currentUsername && msg.recipient_username === selectedFriend) ||
+            (msg.sender_username === selectedFriend && msg.recipient_username === currentUsername)
           ) {
-            setMessages((prev) => [...prev, newMsg]);
+            if (payload.eventType === "INSERT") {
+              setMessages((prev) => {
+                if (prev.some((m) => m.id === msg.id)) return prev;
+                return [...prev, msg];
+              });
+              if (msg.sender_username === selectedFriend) {
+                await supabase
+                  .from("messages")
+                  .update({ is_read: true })
+                  .eq("id", msg.id);
+              }
+            } else if (payload.eventType === "UPDATE") {
+              setMessages((prev) => prev.map((m) => (m.id === msg.id ? msg : m)));
+            }
           }
+          loadConversations(currentUsername, isApproved);
         }
       )
       .subscribe();
@@ -208,17 +274,19 @@ export default function MessagesPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentUsername, selectedFriend, supabase]);
+  }, [currentUsername, selectedFriend, isApproved, loadConversations, supabase]);
 
+  // Scroll messages container smoothly when new messages arrive
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }
   }, [messages]);
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSendMessage = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!selectedFriend || !currentUsername) return;
 
-    // Enforce pending restriction: Only KingDavid is permitted for unapproved accounts
     if (!isApproved && selectedFriend.toLowerCase() !== "kingdavid") {
       alert("Your account is pending review by KingDavid. You can only message KingDavid.");
       return;
@@ -228,11 +296,14 @@ export default function MessagesPage() {
 
     const content = inputText.trim();
     setInputText("");
+    setShowEmojiPicker(false);
 
     const { error } = await supabase.from("messages").insert({
       sender_username: currentUsername,
       recipient_username: selectedFriend,
       content: content,
+      is_read: false,
+      reactions: {},
     });
 
     if (error) {
@@ -241,20 +312,40 @@ export default function MessagesPage() {
     }
   };
 
+  const handleReaction = async (messageId: string, emoji: string, existingReactions?: Record<string, string>) => {
+    if (!currentUsername) return;
+    const reactions = { ...(existingReactions || {}) };
+
+    if (reactions[currentUsername] === emoji) {
+      delete reactions[currentUsername];
+    } else {
+      reactions[currentUsername] = emoji;
+    }
+
+    const { error } = await supabase
+      .from("messages")
+      .update({ reactions })
+      .eq("id", messageId);
+
+    if (error) {
+      console.error("Failed to update reaction:", error);
+    }
+  };
+
   if (loading) {
     return <div className="py-20 text-center text-xs font-semibold text-gray-500">Loading Messages...</div>;
   }
 
-  const displayList = searchQuery.trim() && isApproved ? searchResults : friends;
+  const displayList = searchQuery.trim() && isApproved ? searchResults : conversations;
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden grid grid-cols-1 md:grid-cols-4 h-[75vh]">
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden grid grid-cols-1 md:grid-cols-4 h-[78vh]">
+      
       {/* Conversations Sidebar */}
-      <div className="border-r border-gray-200 bg-gray-50/50 flex flex-col">
-        <div className="p-3 border-b border-gray-200 space-y-2.5 bg-white">
+      <div className={`border-r border-gray-200 bg-gray-50/50 flex flex-col h-full overflow-hidden ${selectedFriend ? "hidden md:flex" : "flex"} md:col-span-1`}>
+        <div className="p-3 border-b border-gray-200 space-y-2.5 bg-white shrink-0">
           <h2 className="text-sm font-black text-gray-900 uppercase tracking-wide px-1">Messages</h2>
           
-          {/* Member Search Bar (Locked for pending members) */}
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-gray-400">
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
@@ -297,48 +388,69 @@ export default function MessagesPage() {
               <button
                 key={member.username}
                 onClick={() => setSelectedFriend(member.username)}
-                className={`w-full p-3.5 flex items-center gap-3 text-left transition cursor-pointer ${
+                className={`w-full p-3.5 flex items-center justify-between text-left transition cursor-pointer ${
                   selectedFriend === member.username ? "bg-amber-50/80 border-l-4 border-[#e7b833]" : "hover:bg-gray-100/60"
                 }`}
               >
-                <div className="relative w-9 h-9 rounded-full bg-gray-200 overflow-hidden shrink-0">
-                  {member.photo_url ? (
-                    <img src={member.photo_url} alt={member.username} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center font-bold text-gray-600 text-xs">
-                      {member.username.charAt(0).toUpperCase()}
-                    </div>
-                  )}
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="relative w-9 h-9 rounded-full bg-gray-200 overflow-hidden shrink-0">
+                    {member.photo_url ? (
+                      <img src={member.photo_url} alt={member.username} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center font-bold text-gray-600 text-xs">
+                        {member.username.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-gray-900 truncate">@{member.username} {member.username.toLowerCase() === "kingdavid" ? "👑" : ""}</p>
+                    <p className="text-[10px] text-gray-400 truncate">
+                      {member.username.toLowerCase() === "kingdavid" ? "Administrator" : "Direct Message"}
+                    </p>
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-bold text-gray-900 truncate">@{member.username} {member.username.toLowerCase() === "kingdavid" ? "👑" : ""}</p>
-                  <p className="text-[10px] text-gray-400 truncate">
-                    {member.username.toLowerCase() === "kingdavid" ? "Administrator" : "Direct Message"}
-                  </p>
-                </div>
+
+                {/* Unread Message Notification Badge */}
+                {Boolean(member.unreadCount && member.unreadCount > 0) && (
+                  <span className="w-4 h-4 bg-rose-600 text-white rounded-full text-[9px] font-bold flex items-center justify-center shrink-0 shadow-xs ml-2 animate-pulse">
+                    {member.unreadCount}
+                  </span>
+                )}
               </button>
             ))
           )}
         </div>
       </div>
 
-      {/* Active Chat Window */}
-      <div className="md:col-span-3 flex flex-col bg-white">
+      {/* Active Chat Window: Fullscreen overlay on mobile when selected */}
+      <div className={`flex flex-col overflow-hidden bg-white ${!selectedFriend ? "hidden md:flex md:col-span-3 md:h-full" : "fixed inset-0 z-50 md:static md:inset-auto md:z-auto md:col-span-3 md:h-full"}`}>
         {selectedFriend ? (
           <>
-            <div className="p-4 border-b border-gray-200 bg-white flex items-center justify-between shadow-2xs">
+            <div className="p-4 border-b border-gray-200 bg-white flex items-center justify-between shadow-2xs shrink-0">
               <div className="flex items-center gap-2.5">
+                {/* Mobile Back Button */}
+                <button
+                  type="button"
+                  onClick={() => setSelectedFriend(null)}
+                  className="md:hidden text-gray-600 hover:text-gray-900 mr-1 p-1 rounded-lg hover:bg-gray-100 transition cursor-pointer flex items-center"
+                  title="Back to conversations"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+                  </svg>
+                </button>
                 <span className="font-bold text-xs text-gray-900">Chatting with @{selectedFriend}</span>
               </div>
             </div>
 
             {!isApproved && (
-              <div className="bg-amber-50 border-b border-amber-200 p-2.5 text-center text-xs text-amber-800 font-medium">
+              <div className="bg-amber-50 border-b border-amber-200 p-2.5 text-center text-xs text-amber-800 font-medium shrink-0">
                 🔒 Account pending approval. You are permitted to message KingDavid.
               </div>
             )}
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/30">
+            {/* Messages Scroll Area */}
+            <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/30">
               {messages.length === 0 ? (
                 <div className="h-full flex items-center justify-center text-xs text-gray-400">
                   No messages yet with @{selectedFriend}. Send a message below!
@@ -346,45 +458,125 @@ export default function MessagesPage() {
               ) : (
                 messages.map((msg) => {
                   const isMe = msg.sender_username.toLowerCase() === currentUsername.toLowerCase();
+                  const reactionsObj = msg.reactions || {};
+                  const reactionEntries = Object.entries(reactionsObj);
+
                   return (
-                    <div key={msg.id} className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}>
-                      <div
-                        className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs shadow-2xs ${
-                          isMe ? "bg-[#e7b833] text-gray-900 font-medium rounded-br-xs" : "bg-white border border-gray-200 text-gray-800 rounded-bl-xs"
-                        }`}
-                      >
-                        {msg.content}
+                    <div key={msg.id} className={`flex flex-col relative group ${isMe ? "items-end" : "items-start"}`}>
+                      
+                      {/* Floating Messenger-style Reaction Bar on Hover */}
+                      <div className={`absolute -top-7 hidden group-hover:flex items-center gap-1 bg-white border border-gray-200 shadow-md rounded-full px-2 py-1 z-20 ${isMe ? "right-0" : "left-0"}`}>
+                        {REACTION_EMOJIS.map((emoji) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            onClick={() => handleReaction(msg.id, emoji, reactionsObj)}
+                            className="hover:scale-125 transition-transform text-sm px-1 cursor-pointer"
+                            title={`React with ${emoji}`}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
                       </div>
-                      <span className="text-[9px] text-gray-400 font-mono mt-1 px-1">
-                        {new Date(msg.created_at).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", hour12: true }).toLowerCase()}
-                      </span>
+
+                      {/* Message Bubble */}
+                      <div className="relative">
+                        <div
+                          className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs shadow-2xs ${
+                            isMe ? "bg-[#e7b833] text-gray-900 font-medium rounded-br-xs" : "bg-white border border-gray-200 text-gray-800 rounded-bl-xs"
+                          }`}
+                        >
+                          {msg.content}
+                        </div>
+
+                        {/* Reaction Pills Display */}
+                        {reactionEntries.length > 0 && (
+                          <div className={`absolute -bottom-3.5 flex items-center gap-0.5 bg-white border border-gray-200 rounded-full px-2 py-0.5 shadow-2xs text-[10px] z-10 ${isMe ? "right-2" : "left-2"}`}>
+                            {Array.from(new Set(Object.values(reactionsObj))).map((emoji, idx) => (
+                              <span key={idx} className="cursor-pointer" title={Object.entries(reactionsObj).filter(([_, e]) => e === emoji).map(([u]) => `@${u}`).join(", ")}>
+                                {emoji}
+                              </span>
+                            ))}
+                            {reactionEntries.length > 1 && (
+                              <span className="text-[9px] font-bold text-gray-500 ml-0.5">{reactionEntries.length}</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Timestamp & Read Status Receipt */}
+                      <div className={`flex items-center gap-2 mt-1.5 px-1 text-[9px] text-gray-400 font-mono ${isMe ? "flex-row-reverse" : "flex-row"}`}>
+                        <span>{new Date(msg.created_at).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", hour12: true }).toLowerCase()}</span>
+                        {isMe && (
+                          <span className={`font-bold ${msg.is_read ? "text-[#e7b833]" : "text-gray-400"}`}>
+                            {msg.is_read ? "Read" : "Sent"}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   );
                 })
               )}
-              <div ref={messagesEndRef} />
             </div>
 
-            <form onSubmit={handleSendMessage} className="p-3 border-t border-gray-200 bg-white flex gap-2">
-              <input
-                type="text"
-                placeholder={`Message @${selectedFriend}...`}
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                className="flex-1 px-3.5 py-2.5 text-xs bg-gray-100 border border-gray-200 rounded-xl focus:outline-none focus:border-[#e7b833] focus:bg-white transition text-gray-900 font-medium placeholder:text-gray-400"
-              />
-              <button
-                type="submit"
-                disabled={!inputText.trim()}
-                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] disabled:opacity-40 text-gray-900 shadow-xs transition cursor-pointer uppercase tracking-wider"
-              >
-                Send
-              </button>
-            </form>
+            {/* Stable Form & Emoji Popup Picker with 2-line Textarea */}
+            <div className="p-3 border-t border-gray-200 bg-white relative shrink-0">
+              {showEmojiPicker && (
+                <div className="absolute bottom-full left-3 mb-2 bg-white border border-gray-200 shadow-xl rounded-xl p-2.5 grid grid-cols-5 gap-2 z-50">
+                  {QUICK_EMOJIS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => {
+                        setInputText((prev) => prev + emoji);
+                        setShowEmojiPicker(false);
+                      }}
+                      className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center transition cursor-pointer text-base"
+                      title={`Insert ${emoji}`}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <form onSubmit={handleSendMessage} className="flex items-end gap-2 shrink-0">
+                <div className="relative flex-1 flex items-center bg-gray-100 border border-gray-200 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setShowEmojiPicker((prev) => !prev)}
+                    title="Insert emoji"
+                    className="absolute left-2.5 bottom-2 text-gray-400 hover:text-gray-600 transition cursor-pointer text-sm flex items-center justify-center w-6 h-6 rounded-full hover:bg-gray-200/60 z-10"
+                  >
+                    😊
+                  </button>
+                  <textarea
+                    rows={2}
+                    placeholder={`Message @${selectedFriend}...`}
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
+                    className="w-full pl-10 pr-3.5 py-2 text-xs bg-transparent focus:outline-none text-gray-900 font-medium placeholder:text-gray-400 min-w-0 resize-none max-h-20 overflow-y-auto leading-relaxed"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={!inputText.trim()}
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] disabled:opacity-40 text-gray-900 shadow-xs transition cursor-pointer uppercase tracking-wider shrink-0"
+                >
+                  Send
+                </button>
+              </form>
+            </div>
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center text-xs text-gray-400">
-            Select KingDavid to begin messaging.
+            Select a conversation to begin messaging.
           </div>
         )}
       </div>

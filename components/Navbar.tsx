@@ -21,10 +21,10 @@ export function Sidebar({ currentUsername }: { currentUsername: string }) {
 
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [friendRequestsCount, setFriendRequestsCount] = useState<number>(0);
+  const [unreadMessagesCount, setUnreadMessagesCount] = useState<number>(0);
   const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
   const [manualExpanded, setManualExpanded] = useState<boolean>(false);
 
-  // Responsive window resize check to trigger icon collapse on smaller screens/overflow
   useEffect(() => {
     const handleResize = () => {
       const smallScreen = window.innerWidth < 1024;
@@ -61,6 +61,17 @@ export function Sidebar({ currentUsername }: { currentUsername: string }) {
     if (!friendError && friendCount !== null) {
       setFriendRequestsCount(friendCount);
     }
+
+    // Fetch unread messages count globally
+    const { count: msgCount, error: msgError } = await supabase
+      .from("messages")
+      .select("*", { count: "exact", head: true })
+      .eq("recipient_username", currentUsername)
+      .eq("is_read", false);
+
+    if (!msgError && msgCount !== null) {
+      setUnreadMessagesCount(msgCount);
+    }
   }, [currentUsername, supabase]);
 
   useEffect(() => {
@@ -70,8 +81,39 @@ export function Sidebar({ currentUsername }: { currentUsername: string }) {
       fetchBadgeCounts();
     }, 3000);
 
-    return () => clearInterval(interval);
-  }, [fetchBadgeCounts]);
+    // Realtime listener for unread messages badge
+    const channel = supabase
+      .channel("sidebar-unread-messages")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        (payload: any) => {
+          if (payload.new.recipient_username?.toLowerCase() === currentUsername.toLowerCase() && !payload.new.is_read) {
+            setUnreadMessagesCount((prev) => prev + 1);
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "messages" },
+        () => {
+          fetchBadgeCounts();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
+  }, [fetchBadgeCounts, currentUsername, supabase]);
+
+  // Clear unread count when visiting messages page
+  useEffect(() => {
+    if (pathname === "/messages") {
+      setUnreadMessagesCount(0);
+    }
+  }, [pathname]);
 
   const isActive = (path: string) => pathname === path;
   const isKingDavid = currentUsername.toLowerCase() === "kingdavid";
@@ -89,7 +131,6 @@ export function Sidebar({ currentUsername }: { currentUsername: string }) {
           : "w-56"
       }`}>
         
-        {/* Mobile / Touch Click-to-Expand Toggle Button */}
         {isCollapsed && (
           <button
             onClick={() => setManualExpanded(!manualExpanded)}
@@ -145,16 +186,23 @@ export function Sidebar({ currentUsername }: { currentUsername: string }) {
           <span className={`${!isExpanded ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Gallery</span>
         </button>
 
-        {/* Messages */}
+        {/* Messages with Red Notification Badge */}
         <button
           onClick={() => { router.push("/messages"); setManualExpanded(false); }}
           title="Messages"
-          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition cursor-pointer ${isActive("/messages") ? "bg-[#e7b833] text-gray-900 font-black shadow-xs" : "bg-slate-100 hover:bg-slate-200 text-gray-700"}`}
+          className={`flex items-center justify-between px-3 py-2.5 rounded-lg transition cursor-pointer ${isActive("/messages") ? "bg-[#e7b833] text-gray-900 font-black shadow-xs" : "bg-slate-100 hover:bg-slate-200 text-gray-700"}`}
         >
-          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
-          </svg>
-          <span className={`${!isExpanded ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Messages</span>
+          <div className="flex items-center gap-3 min-w-0">
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
+            </svg>
+            <span className={`${!isExpanded ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Messages</span>
+          </div>
+          {unreadMessagesCount > 0 && (
+            <span className="w-4 h-4 bg-rose-600 text-white rounded-full text-[9px] font-bold flex items-center justify-center shrink-0 shadow-xs ml-1 animate-pulse">
+              {unreadMessagesCount}
+            </span>
+          )}
         </button>
 
         {/* Friends */}
@@ -176,7 +224,7 @@ export function Sidebar({ currentUsername }: { currentUsername: string }) {
           )}
         </button>
 
-        {/* Social (Hash Icon for Public Chat Rooms) */}
+        {/* Social */}
         <button
           onClick={() => { router.push("/social"); setManualExpanded(false); }}
           title="Social"
@@ -212,7 +260,7 @@ export function Sidebar({ currentUsername }: { currentUsername: string }) {
           <span className={`${!isExpanded ? "max-w-0 opacity-0 group-hover:max-w-xs group-hover:opacity-100" : "max-w-xs opacity-100"} transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden text-xs`}>Members</span>
         </button>
 
-        {/* Applications (King David) */}
+        {/* Applications */}
         {isKingDavid && (
           <button
             onClick={() => { router.push("/admin"); setManualExpanded(false); }}
@@ -237,10 +285,7 @@ export function Sidebar({ currentUsername }: { currentUsername: string }) {
   );
 }
 
-export default function Navbar({ 
-  currentUsername, 
-  onRefreshData 
-}: NavbarProps) {
+export default function Navbar({ currentUsername, onRefreshData }: NavbarProps) {
   const router = useRouter();
   const supabase = createBrowserClient(
     "https://bucijzexpxsuxvsnwwyu.supabase.co",
@@ -279,7 +324,7 @@ export default function Navbar({
           session_token: localToken,
         });
       } catch (err) {
-        console.error("Secure navbar logout finalization failed:", err);
+        console.error("Secure logout failed:", err);
       }
     }
     await supabase.auth.signOut();
@@ -296,7 +341,6 @@ export default function Navbar({
     if (cleanTarget.toUpperCase() === "ALL") {
       if (confirm("Are you sure you want to reset ALL profiles and transactions in Supabase?")) {
         const { data: allProfiles } = await supabase.from("profiles").select("username");
-        
         if (allProfiles) {
           for (const p of allProfiles) {
             await supabase.from("transactions").delete().or(`username.eq.${p.username},recipient_name.eq.${p.username}`);
@@ -387,15 +431,12 @@ export default function Navbar({
               </div>
             )}
 
-            {/* Username (Non-clickable) */}
             <div className="flex items-center justify-center">
               <span className="text-white font-bold text-xs tracking-wide">@{currentUsername} {currentUsername === "KingDavid" ? "👑" : ""}</span>
             </div>
 
-            {/* Divider */}
             <span className="text-zinc-600 font-light">|</span>
 
-            {/* Settings Button */}
             <button
               type="button"
               title="Settings"
@@ -407,10 +448,8 @@ export default function Navbar({
               </svg>
             </button>
 
-            {/* Divider */}
             <span className="text-zinc-600 font-light">|</span>
 
-            {/* Sign Out Button (switches to door exit icon on header overflow) */}
             <button
               onClick={() => setShowSignOutModal(true)}
               title="Sign Out"
@@ -429,41 +468,19 @@ export default function Navbar({
         <div className="h-1.5 bg-[#e7b833] w-full" />
       </header>
 
-      {/* SIGN OUT CONFIRMATION MODAL */}
       {showSignOutModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[100]">
-          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-sm overflow-hidden transition-all text-left">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-sm overflow-hidden text-left">
             <div className="bg-[#000000] text-white p-4 flex justify-between items-center font-bold">
               <h3 className="text-base font-bold text-white">Sign Out Confirmation</h3>
-              <button
-                onClick={() => setShowSignOutModal(false)}
-                className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer"
-              >
-                ✕
-              </button>
+              <button onClick={() => setShowSignOutModal(false)} className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer">✕</button>
             </div>
             <div className="h-1 bg-[#e7b833]" />
-
             <div className="p-5 space-y-4">
-              <p className="text-xs text-gray-700 font-medium leading-relaxed">
-                This will end your current session! Are you sure?
-              </p>
-
+              <p className="text-xs text-gray-700 font-medium leading-relaxed">This will end your current session! Are you sure?</p>
               <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowSignOutModal(false)}
-                  className="w-1/2 py-2 rounded text-xs font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
-                >
-                  No
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSignOutConfirm}
-                  className="w-1/2 py-2 rounded text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
-                >
-                  Yes
-                </button>
+                <button type="button" onClick={() => setShowSignOutModal(false)} className="w-1/2 py-2 rounded text-xs font-semibold border border-gray-300 hover:bg-gray-100 cursor-pointer text-gray-700">No</button>
+                <button type="button" onClick={handleSignOutConfirm} className="w-1/2 py-2 rounded text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow cursor-pointer">Yes</button>
               </div>
             </div>
           </div>
@@ -472,27 +489,18 @@ export default function Navbar({
 
       {showResetModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[100]">
-          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all text-left">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden text-left">
             <div className="bg-[#800000] text-white p-4 flex justify-between items-center font-bold">
               <h3 className="text-base font-bold">⚠️ Reset Account Data</h3>
-              <button
-                onClick={() => setShowResetModal(false)}
-                className="text-red-100 hover:text-white text-lg leading-none cursor-pointer"
-              >
-                ✕
-              </button>
+              <button onClick={() => setShowResetModal(false)} className="text-red-100 hover:text-white text-lg leading-none cursor-pointer">✕</button>
             </div>
             <div className="h-1 bg-[#660000]" />
-
             <form onSubmit={handleExecuteReset} className="p-5 space-y-4">
               <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-[#800000]">
                 Warning: This will clear transaction history and reset session timers. Type an exact username or <strong>ALL</strong>.
               </div>
-
               <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Target Username / ALL
-                </label>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Target Username / ALL</label>
                 <input
                   type="text"
                   required
@@ -502,21 +510,9 @@ export default function Navbar({
                   className="w-full px-3 py-2 border border-gray-300 rounded text-sm text-black font-mono focus:outline-none focus:border-[#800000]"
                 />
               </div>
-
               <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowResetModal(false)}
-                  className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#800000] hover:bg-[#660000] text-white shadow transition cursor-pointer"
-                >
-                  Confirm Reset
-                </button>
+                <button type="button" onClick={() => setShowResetModal(false)} className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 cursor-pointer text-gray-700">Cancel</button>
+                <button type="submit" className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#800000] hover:bg-[#660000] text-white shadow cursor-pointer">Confirm Reset</button>
               </div>
             </form>
           </div>
