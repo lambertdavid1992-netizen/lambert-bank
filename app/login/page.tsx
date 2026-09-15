@@ -660,9 +660,9 @@ export default function LoginPage() {
 
   return (
     <div className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-start py-8 px-4 font-sans overflow-y-auto">
-      <div className="bg-black md:bg-zinc-950 md:border md:border-zinc-800 rounded-2xl shadow-2xl w-full max-w-xl p-6 sm:p-8 space-y-6 text-white my-auto md:my-0">
+      <div className="bg-black md:bg-zinc-950 rounded-2xl shadow-2xl w-full max-w-xl p-6 sm:p-8 space-y-6 text-white my-auto md:my-0">
         
-        <div className="flex items-start justify-between border-b border-zinc-800 pb-4">
+        <div className="flex items-start justify-between pb-4">
           <div className="flex items-start gap-3">
             <div className="relative w-10 h-10 shrink-0">
               <Image src="/logo.png" alt="Logo" fill sizes="40px" className="object-contain" />
@@ -687,7 +687,7 @@ export default function LoginPage() {
           {view === "SIGNUP" && (
             <div className="space-y-4">
               {/* Profile Identity Photo Upload Box at the Very Top */}
-              <div className="flex flex-col items-center justify-center pb-2 border-b border-zinc-800">
+              <div className="flex flex-col items-center justify-center pb-2">
                 <div className="mb-2 text-center">
                   <label className="block text-[11px] font-bold text-gray-300 uppercase tracking-tight">PROFILE IDENTITY PHOTO</label>
                 </div>
@@ -867,7 +867,7 @@ export default function LoginPage() {
               </div>
 
               {/* Standardized International Address Fields */}
-              <div className="space-y-3 pt-2 border-t border-zinc-800">
+              <div className="space-y-3 pt-2">
                 <span className="block text-[11px] font-extrabold text-gray-200 uppercase tracking-wide">Residential Address</span>
                 
                 <div>
@@ -973,7 +973,7 @@ export default function LoginPage() {
               </div>
             </div>
           ) : view === "SIGNIN" && (
-            <div className="space-y-4 pt-2 border-t border-zinc-800">
+            <div className="space-y-4 pt-2">
               <div>
                 <div className="flex justify-between items-center mb-1">
                   <label className="block text-[11px] font-bold text-gray-300 uppercase">Email Address</label>
@@ -1035,7 +1035,7 @@ export default function LoginPage() {
 
           {/* For Sign Up Email and Password fields */}
           {view === "SIGNUP" && (
-            <div className="space-y-4 pt-2 border-t border-zinc-800">
+            <div className="space-y-4 pt-2">
               <div>
                 <div className="flex justify-between items-center mb-1">
                   <label className="block text-[11px] font-bold text-gray-300 uppercase">Email Address</label>
