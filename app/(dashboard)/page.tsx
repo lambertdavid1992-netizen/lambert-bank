@@ -4,7 +4,6 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import { useRouter, usePathname } from "next/navigation";
 import { useSessionTimer } from "@/components/SessionTimerProvider";
-import Image from "next/image";
 
 interface Transaction {
   id: string;
@@ -32,34 +31,49 @@ function getTransactionIcon(type: string, title: string = "") {
   const lower = title.toLowerCase();
   if (lower.includes("claim") || lower.includes("pending balance transfer")) {
     return (
-      <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 font-bold text-xs shadow-2xs relative overflow-hidden" title="Claim / Reward">
-        <Image src="/pending-balance.png" alt="Pending Balance" fill sizes="32px" className="object-contain p-1" />
+      <div className="w-8 h-8 rounded-full bg-[#eaeaea] text-gray-800 flex items-center justify-center shrink-0 font-bold text-xs shadow-2xs relative overflow-hidden" title="Claim / Reward">
+        <svg className="w-5 h-5 text-gray-800" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="10" cy="10" r="7" />
+          <path d="M10 7.5v5m-1.5-3.5h3" />
+          <circle cx="17.5" cy="17.5" r="4.5" fill="white" stroke="currentColor" strokeWidth="2" />
+          <path d="M17.5 15.5v4m-2-2h4" />
+        </svg>
       </div>
     );
   }
   if (lower.includes("admin capital injection")) {
     return (
-      <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0 font-bold text-xs shadow-2xs" title="Admin Capital Injection">
+      <div className="w-8 h-8 rounded-full bg-[#eaeaea] text-gray-800 flex items-center justify-center shrink-0 font-bold text-xs shadow-2xs" title="Admin Capital Injection">
         👑
       </div>
     );
   }
   if (type === "DEBIT" || lower.includes("transfer to")) {
     return (
-      <div className="w-8 h-8 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center shrink-0 shadow-2xs" title="Outgoing Transfer">
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
-        </svg>
+      <div className="w-8 h-8 rounded-full bg-[#eaeaea] text-gray-800 flex items-center justify-center shrink-0 shadow-2xs" title="Outgoing Transfer">
+        <span className="text-sm font-bold">⇄</span>
       </div>
     );
   }
   return (
-    <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 shadow-2xs" title="Incoming Credit">
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 4.5l15 15m0 0V8.25m0 11.25H8.25" />
+    <div className="w-8 h-8 rounded-full bg-[#eaeaea] text-gray-800 flex items-center justify-center shrink-0 shadow-2xs relative overflow-hidden" title="Incoming Transfer / Gift">
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7" />
       </svg>
     </div>
   );
+}
+
+function formatDateDDMMYYYY(dateTimeStr: string): string {
+  if (!dateTimeStr) return "";
+  const d = new Date(dateTimeStr);
+  if (!isNaN(d.getTime())) {
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
+  }
+  return dateTimeStr.split(",")[0] || dateTimeStr;
 }
 
 export default function CommBankStyleDashboard() {
@@ -76,6 +90,7 @@ export default function CommBankStyleDashboard() {
   const [sessionUserId, setSessionUserId] = useState<string>("");
 
   const [currentUsername, setCurrentUsername] = useState<string>("");
+  const [userGender, setUserGender] = useState<string>("");
   const [mounted, setMounted] = useState<boolean>(false);
 
   const [balanceCents, setBalanceCents] = useState<number | null>(null);
@@ -189,6 +204,13 @@ export default function CommBankStyleDashboard() {
           setCurrentUsername("KingDavid");
           approvedStatus = true;
 
+          const { data: adminProf } = await supabase
+            .from("profiles")
+            .select("gender")
+            .eq("username", "KingDavid")
+            .single();
+          if (adminProf) setUserGender(adminProf.gender || "");
+
           await supabase
             .from("profiles")
             .update({ is_approved: true, user_id: session.user.id, session_start_timestamp: nowIso })
@@ -203,6 +225,7 @@ export default function CommBankStyleDashboard() {
           if (profile) {
             targetUser = profile.username;
             setCurrentUsername(profile.username);
+            setUserGender(profile.gender || "");
             approvedStatus = Boolean(profile.is_approved);
           } else {
             router.push("/login");
@@ -249,6 +272,7 @@ export default function CommBankStyleDashboard() {
       if (profileData) {
         setBalanceCents(profileData.balance_cents ?? 0);
         setAccumulatedSessionSeconds(profileData.accumulated_session_seconds || 0);
+        setUserGender(profileData.gender || "");
         const days = profileData.accumulated_days ?? Math.floor((profileData.accumulated_session_seconds || 0) / 86400);
         setAccumulatedDays(days);
       }
@@ -357,6 +381,9 @@ export default function CommBankStyleDashboard() {
             }
             if (typeof updated.accumulated_days === "number") {
               setAccumulatedDays(updated.accumulated_days);
+            }
+            if (typeof updated.gender === "string") {
+              setUserGender(updated.gender);
             }
           }
         }
@@ -942,8 +969,10 @@ export default function CommBankStyleDashboard() {
               >
                 <span className="text-sm">⇄</span> Pay Someone
               </button>
-              <div className="flex items-center justify-center text-[11px] text-gray-500 font-mono px-0.5 h-4 relative">
-                <span>ID: @{currentUsername}</span>
+              <div className="flex items-center justify-center text-[11px] font-mono px-0.5 h-4 relative">
+                <span className={userGender === "Female" ? "text-pink-600 font-bold" : userGender === "Male" ? "text-blue-600 font-bold" : "text-gray-500"}>
+                  ID: @{currentUsername}
+                </span>
                 {currentUsername === "KingDavid" && (
                   <button
                     onClick={() => {
@@ -965,9 +994,11 @@ export default function CommBankStyleDashboard() {
         {isApproved && (
           <div className="bg-white rounded-xl border border-gray-200 p-2.5 sm:p-3 shadow-sm flex flex-col justify-between hover:shadow-md transition-all relative overflow-hidden">
 
-            {/* MULTIPLIER MOVED TO TOP RIGHT CORNER OF PENDING BALANCE CARD */}
+            {/* MULTIPLIER IN TOP RIGHT CORNER (COLOR-CODED BY GENDER) */}
             <div className="absolute right-3.5 top-3 z-10">
-              <span className="text-xs font-mono font-extrabold text-indigo-600 block">
+              <span className={`text-xs font-mono font-extrabold block ${
+                userGender === "Female" ? "text-pink-600" : "text-blue-600"
+              }`}>
                 x {multiplier.toFixed(2)}
               </span>
             </div>
@@ -999,8 +1030,13 @@ export default function CommBankStyleDashboard() {
                     : "bg-[#0d8b07] hover:bg-[#0a6d05] text-gray-900 cursor-pointer shadow-sm"
                 }`}
               >
-                <span className="relative w-4 h-4 inline-block align-middle shrink-0">
-                  <Image src="/pending-balance.png" alt="Claim" fill sizes="16px" className="object-contain" />
+                <span className="relative w-5 h-5 inline-flex items-center justify-center shrink-0">
+                  <svg className="w-5 h-5 text-gray-800" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="10" cy="10" r="7" />
+                    <path d="M10 7.5v5m-1.5-3.5h3" />
+                    <circle cx="17.5" cy="17.5" r="4.5" fill={claimableCents < 3 ? "white" : "#0d8b07"} stroke="currentColor" strokeWidth="2" />
+                    <path d="M17.5 15.5v4m-2-2h4" />
+                  </svg>
                 </span> Claim
               </button>
               <div className="flex items-center justify-center text-[11px] text-gray-500 font-mono px-0.5 h-4">
@@ -1018,12 +1054,10 @@ export default function CommBankStyleDashboard() {
             <div className="flex items-start justify-between pb-1.5 border-b border-gray-100 mb-1.5">
               <div className="flex items-start gap-2.5 min-w-0 w-full">
                 <div className="relative w-9 h-9 shrink-0 mt-0.5">
-                  <Image
+                  <img
                     src={`/badges/time/${currentBadge?.file_name || 'time-waster.png'}`}
                     alt={currentBadge?.title || 'Time Waster'}
-                    fill
-                    sizes="36px"
-                    className="object-contain drop-shadow-sm"
+                    className="w-full h-full object-contain drop-shadow-sm"
                   />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -1036,7 +1070,7 @@ export default function CommBankStyleDashboard() {
                         <div className="flex items-center -space-x-1">
                           {Array.from({ length: currentTier }).map((_, idx) => (
                             <div key={idx} className="relative w-3.5 h-3.5 shrink-0">
-                              <Image src="/badges/time/golden-star.png" alt="Star" fill sizes="14px" className="object-contain drop-shadow-2xs" />
+                              <img src="/badges/time/golden-star.png" alt="Star" className="w-full h-full object-contain drop-shadow-2xs" />
                             </div>
                           ))}
                         </div>
@@ -1044,19 +1078,19 @@ export default function CommBankStyleDashboard() {
                         <div className="flex items-center -space-x-1">
                           {Array.from({ length: currentTier - 5 }).map((_, idx) => (
                             <div key={idx} className="relative w-3.5 h-3.5 shrink-0">
-                              <Image src="/badges/time/golden-cross.png" alt="Cross" fill sizes="14px" className="object-contain drop-shadow-2xs" />
+                              <img src="/badges/time/golden-cross.png" alt="Cross" className="w-full h-full object-contain drop-shadow-2xs" />
                             </div>
                           ))}
                         </div>
                       ) : (
                         <div className="relative w-4 h-4 shrink-0" title="Rank Tier 10 (Hourglass)">
-                          <Image src="/badges/time/golden-hourglass.png" alt="Hourglass" fill sizes="16px" className="object-contain drop-shadow-2xs" />
+                          <img src="/badges/time/golden-hourglass.png" alt="Hourglass" className="w-full h-full object-contain drop-shadow-2xs" />
                         </div>
                       )}
 
                       {isKingDavid && (
                         <div className="relative w-3.5 h-3.5 shrink-0 ml-0.5" title="KingDavid Sovereign Infinity">
-                          <Image src="/badges/time/golden-infinity.png" alt="Infinity" fill sizes="14px" className="object-contain drop-shadow-2xs" />
+                          <img src="/badges/time/golden-infinity.png" alt="Infinity" className="w-full h-full object-contain drop-shadow-2xs" />
                         </div>
                       )}
                     </div>
@@ -1118,20 +1152,22 @@ export default function CommBankStyleDashboard() {
                 </div>
               </div>
 
-              {/* PROGRESS METER */}
+              {/* PROGRESS METER (COLOR-CODED BY GENDER) */}
               <div className="bg-white p-1 rounded-full shadow-xs shrink-0 ml-2">
                 {nextBadge ? (
                   <div className="relative w-12 h-12 flex items-center justify-center" title={`Rank progress: ${progressPercent.toFixed(2)}%`}>
                     <svg className="w-12 h-12 transform -rotate-90" viewBox="0 0 36 36">
                       <path
-                        className="text-indigo-100"
+                        className="text-gray-100"
                         strokeWidth="3.5"
                         stroke="currentColor"
                         fill="none"
                         d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                       />
                       <path
-                        className="text-indigo-600 transition-all duration-300 ease-out"
+                        className={`transition-all duration-300 ease-out ${
+                          userGender === "Female" ? "text-pink-600" : "text-blue-600"
+                        }`}
                         strokeDasharray={circumference}
                         strokeDashoffset={strokeDashoffset}
                         strokeWidth="3.5"
@@ -1141,7 +1177,9 @@ export default function CommBankStyleDashboard() {
                         d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                       />
                     </svg>
-                    <div className="absolute inset-0 flex items-center justify-center font-mono text-[8px] text-indigo-900 font-bold tracking-tighter">
+                    <div className={`absolute inset-0 flex items-center justify-center font-mono text-[8px] font-bold tracking-tighter ${
+                      userGender === "Female" ? "text-pink-700" : "text-blue-800"
+                    }`}>
                       {progressPercent.toFixed(2)}%
                     </div>
                   </div>
@@ -1160,11 +1198,11 @@ export default function CommBankStyleDashboard() {
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden print:border-none print:shadow-none">
-        <div className="p-4 sm:px-5 sm:py-4 border-b border-gray-200 flex flex-col lg:flex-row justify-between lg:items-center gap-3 bg-gray-50/50 print:hidden">
+        <div className="p-4 sm:px-5 sm:py-4 border-b border-gray-200 flex flex-col md:flex-row justify-between md:items-center gap-3 bg-gray-50/50 print:hidden">
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-gray-900">Transactions</h2>
-              <span className="text-[11px] text-gray-400 font-normal">(Click any row to view & print receipt)</span>
+              <span className="text-[11px] text-gray-400 font-normal hidden sm:inline">(Click any row to view & print receipt)</span>
             </div>
             <span className="text-xs text-gray-500">
               Showing {filteredTransactions.length === 0 ? 0 : startIndex + 1}–{Math.min(startIndex + ITEMS_PER_PAGE, filteredTransactions.length)} of {filteredTransactions.length}
@@ -1192,7 +1230,7 @@ export default function CommBankStyleDashboard() {
                   if (e.key === "Escape") setSearchQuery("");
                 }}
                 placeholder="Search ref ID, recipient, or amount..."
-                className="w-full pl-9 pr-8 py-2 text-xs text-gray-900 bg-gray-100/90 hover:bg-gray-100 focus:bg-white border border-gray-200 focus:border-[#e7b833] rounded-lg shadow-2xs focus:outline-none focus:ring-2 focus:ring-amber-100 transition-all placeholder:text-gray-400 font-medium"
+                className="w-full pl-9 pr-8 py-2 text-xs text-gray-900 bg-gray-100 hover:bg-gray-100 focus:bg-white border border-gray-200 focus:border-[#e7b833] rounded-lg shadow-2xs focus:outline-none focus:ring-2 focus:ring-amber-100 transition-all placeholder:text-gray-400 font-medium"
               />
 
               {searchQuery && (
@@ -1264,22 +1302,27 @@ export default function CommBankStyleDashboard() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse print:bg-white">
+          <table className="w-full table-auto text-left border-collapse print:bg-white">
             <thead>
               <tr className="bg-gray-100 text-gray-700 text-xs font-bold uppercase tracking-wider border-b border-gray-200 print:bg-gray-100 print:text-gray-900">
-                <th className="py-3 px-5 border-r border-gray-200">Transaction Information</th>
-                {/* Single Amount column visible only on mobile/overflow (< lg) */}
-                <th className="py-3 px-5 border-r border-gray-200 text-right w-36 lg:hidden">Amount</th>
-                {/* Separate Debits and Credits visible only on wide desktop (lg+) */}
-                <th className="py-3 px-5 border-r border-gray-200 text-right w-36 hidden lg:table-cell">Debits</th>
-                <th className="py-3 px-5 border-r border-gray-200 text-right w-36 hidden lg:table-cell">Credits</th>
-                <th className="py-3 px-5 text-right w-36">Balance</th>
+                <th className="py-3 px-4 md:px-5 border-r border-gray-200">
+                  <span className="md:hidden">Type</span>
+                  <span className="hidden md:inline">Transaction Information</span>
+                </th>
+                {/* Date column visible only on mobile/overflow (< md) */}
+                <th className="py-3 px-3 md:px-5 border-r border-gray-200 md:hidden">Date</th>
+                {/* Single Amount column visible only on mobile/overflow (< md) */}
+                <th className="py-3 px-3 md:px-5 border-r border-gray-200 text-right md:hidden">Amount</th>
+                {/* Separate Debits and Credits visible only on wide desktop (md+) */}
+                <th className="py-3 px-3 md:px-5 border-r border-gray-200 text-right hidden md:table-cell">Debits</th>
+                <th className="py-3 px-3 md:px-5 border-r border-gray-200 text-right hidden md:table-cell">Credits</th>
+                <th className="py-3 px-4 md:px-5 text-right">Balance</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 text-sm print:divide-gray-300">
               {currentTransactions.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-10 text-center text-gray-500 text-sm">
+                  <td colSpan={6} className="py-10 text-center text-gray-500 text-sm">
                     {searchQuery.trim() ? (
                       `No transactions matching "${searchQuery}".`
                     ) : (
@@ -1298,7 +1341,12 @@ export default function CommBankStyleDashboard() {
                               }`}
                             >
                               <span className="relative w-4 h-4 inline-block align-middle shrink-0 mr-1">
-                                <Image src="/pending-balance.png" alt="Claim" fill sizes="16px" className="object-contain" />
+                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <circle cx="10" cy="10" r="7" />
+                                  <path d="M10 7.5v5m-1.5-3.5h3" />
+                                  <circle cx="17.5" cy="17.5" r="4.5" fill="white" stroke="currentColor" strokeWidth="2" />
+                                  <path d="M17.5 15.5v4m-2-2h4" />
+                                </svg>
                               </span> Claim Pending Balance {claimableCents < 3 ? "(Min $0.03)" : ""}
                             </button>
                           )}
@@ -1324,12 +1372,12 @@ export default function CommBankStyleDashboard() {
                       title="Click to view & print official receipt"
                       className="hover:bg-amber-50/50 cursor-pointer transition group print:bg-white print:hover:bg-transparent"
                     >
-                      <td className="py-3.5 px-5 border-r border-gray-100 print:border-gray-300 print:bg-white relative">
+                      <td className="py-3.5 px-4 md:px-5 border-r border-gray-100 print:border-gray-300 print:bg-white relative truncate">
                         <div className="flex items-center gap-3 relative group/item">
                           {getTransactionIcon(tx.type, tx.title)}
 
-                          {/* Full text details visible on larger screens (lg and above) */}
-                          <div className="hidden lg:block flex-1 min-w-0">
+                          {/* Full text details visible on medium screens (md and above) */}
+                          <div className="hidden md:block flex-1 min-w-0">
                             <div className="flex items-center justify-between">
                               <span className="font-semibold text-gray-900 group-hover:text-[#b8860b] print:text-gray-900 print:group-hover:text-gray-900 transition truncate">
                                 {!isSpecial && tx.recipientName && tx.title.startsWith("Transfer to ") ? (
@@ -1354,13 +1402,13 @@ export default function CommBankStyleDashboard() {
                                 View Receipt ↗
                               </span>
                             </div>
-                            <div className="text-xs text-gray-500 mt-0.5 font-mono print:text-gray-600">
+                            <div className="text-xs text-gray-500 mt-0.5 font-mono print:text-gray-600 truncate">
                               {tx.dateTime} • {tx.category} • Ref: {tx.id}
                             </div>
                           </div>
 
-                          {/* Hover Tooltip appearing on smaller viewports (< lg) */}
-                          <div className="absolute left-14 top-1/2 -translate-y-1/2 bg-white border border-gray-200 shadow-2xl rounded-xl p-3 z-40 opacity-0 pointer-events-none group-hover/item:opacity-100 group-hover/item:pointer-events-auto transition-all duration-200 w-72 lg:hidden">
+                          {/* Hover Tooltip appearing on smaller viewports (< md) */}
+                          <div className="absolute left-14 top-1/2 -translate-y-1/2 bg-white border border-gray-200 shadow-2xl rounded-xl p-3 z-40 opacity-0 pointer-events-none group-hover/item:opacity-100 group-hover/item:pointer-events-auto transition-all duration-200 w-72 md:hidden">
                             <p className="font-bold text-xs text-gray-900 mb-1">
                               {!isSpecial && tx.recipientName && tx.title.startsWith("Transfer to ") ? (
                                 <>Transfer to <span className="text-[#b8860b]">@{tx.recipientName}</span></>
@@ -1374,15 +1422,20 @@ export default function CommBankStyleDashboard() {
                         </div>
                       </td>
 
-                      {/* Merged Amount column visible only on mobile/overflow (< lg) */}
-                      <td className="py-3.5 px-5 border-r border-gray-100 print:border-gray-300 print:bg-white text-right font-mono lg:hidden">
+                      {/* Date column visible only on mobile/overflow (< md) */}
+                      <td className="py-3.5 px-3 md:px-5 border-r border-gray-100 print:border-gray-300 print:bg-white text-xs font-mono text-gray-600 md:hidden truncate">
+                        {formatDateDDMMYYYY(tx.dateTime)}
+                      </td>
+
+                      {/* Merged Amount column visible only on mobile/overflow (< md) */}
+                      <td className="py-3.5 px-3 md:px-5 border-r border-gray-100 print:border-gray-300 print:bg-white text-right font-mono md:hidden truncate">
                         <span className={`font-semibold ${isCredit ? "text-emerald-600" : "text-rose-600"}`}>
                           {isCredit ? "+" : "-"}{formatCurrency(tx.centsAmount)}
                         </span>
                       </td>
 
-                      {/* Separate Debits column visible only on wide desktop (lg+) */}
-                      <td className="py-3.5 px-5 border-r border-gray-100 print:border-gray-300 print:bg-white text-right font-mono hidden lg:table-cell">
+                      {/* Separate Debits column visible only on wide desktop (md+) */}
+                      <td className="py-3.5 px-3 md:px-5 border-r border-gray-100 print:border-gray-300 print:bg-white text-right font-mono hidden md:table-cell truncate">
                         {!isCredit ? (
                           <span className="font-semibold text-rose-600 print:text-rose-600">
                             -{formatCurrency(tx.centsAmount)}
@@ -1392,8 +1445,8 @@ export default function CommBankStyleDashboard() {
                         )}
                       </td>
 
-                      {/* Separate Credits column visible only on wide desktop (lg+) */}
-                      <td className="py-3.5 px-5 border-r border-gray-100 print:border-gray-300 print:bg-white text-right font-mono hidden lg:table-cell">
+                      {/* Separate Credits column visible only on wide desktop (md+) */}
+                      <td className="py-3.5 px-3 md:px-5 border-r border-gray-100 print:border-gray-300 print:bg-white text-right font-mono hidden md:table-cell truncate">
                         {isCredit ? (
                           <span className="font-semibold text-emerald-600 print:text-emerald-600">
                             +{formatCurrency(tx.centsAmount)}
@@ -1403,7 +1456,7 @@ export default function CommBankStyleDashboard() {
                         )}
                       </td>
 
-                      <td className="py-3.5 px-5 text-right font-mono font-bold text-gray-900 print:text-gray-900 print:bg-white">
+                      <td className="py-3.5 px-4 md:px-5 text-right font-mono font-bold text-gray-900 print:text-gray-900 print:bg-white truncate">
                         {formatCurrency(tx.balanceAfterCents)}
                       </td>
                     </tr>

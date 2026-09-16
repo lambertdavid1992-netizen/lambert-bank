@@ -265,6 +265,21 @@ const RESERVED_USERNAMES = [
   "socialtimesupport"
 ];
 
+const MONTHS = [
+  { value: "01", name: "January" },
+  { value: "02", name: "February" },
+  { value: "03", name: "March" },
+  { value: "04", name: "April" },
+  { value: "05", name: "May" },
+  { value: "06", name: "June" },
+  { value: "07", name: "July" },
+  { value: "08", name: "August" },
+  { value: "09", name: "September" },
+  { value: "10", name: "October" },
+  { value: "11", name: "November" },
+  { value: "12", name: "December" },
+];
+
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createBrowserClient(
@@ -278,14 +293,19 @@ export default function LoginPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [pin, setPin] = useState(""); 
+  const [confirmPin, setConfirmPin] = useState("");
   const [showPin, setShowPin] = useState(false);
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [username, setUsername] = useState("");
-  const [dob, setDob] = useState("");
+  
+  const [dobDay, setDobDay] = useState("");
+  const [dobMonth, setDobMonth] = useState("");
+  const [dobYear, setDobYear] = useState("");
   
   const [phoneCode, setPhoneCode] = useState("+61");
   const [mobileNumber, setMobileNumber] = useState("");
@@ -308,9 +328,100 @@ export default function LoginPage() {
   const [lastNameError, setLastNameError] = useState("");
   const [usernameError, setUsernameError] = useState("");
   const [emailError, setEmailError] = useState("");
+  const [passwordError, setPasswordError] = useState("");
   const [pinError, setPinError] = useState("");
+  const [dobError, setDobError] = useState("");
   const [photoError, setPhotoError] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Cascading Field Unlocking Conditions
+  const isFirstNameDisabled = !photoFile;
+  const isLastNameDisabled = isFirstNameDisabled || !firstName.trim() || Boolean(firstNameError);
+  const isDobDayDisabled = isLastNameDisabled || !lastName.trim() || Boolean(lastNameError);
+  const isDobMonthDisabled = isDobDayDisabled || !dobDay;
+  const isDobYearDisabled = isDobMonthDisabled || !dobMonth;
+  const isGenderDisabled = isDobYearDisabled || !dobYear || Boolean(dobError);
+  const isReligionDisabled = isGenderDisabled || !gender;
+  const isEmploymentDisabled = isReligionDisabled || !religion;
+  const isPhoneCodeDisabled = isEmploymentDisabled || !employmentStatus;
+  const isMobileNumberDisabled = isPhoneCodeDisabled;
+  const isStreet1Disabled = isEmploymentDisabled || !employmentStatus;
+  const isStreet2Disabled = isStreet1Disabled || !streetAddress1.trim();
+  const isCityDisabled = isStreet1Disabled || !streetAddress1.trim();
+  const isStateDisabled = isCityDisabled || !city.trim();
+  const isPostcodeDisabled = isStateDisabled || !stateProvince.trim();
+  const isCountryDisabled = isPostcodeDisabled || !postcode.trim();
+  const isUsernameDisabled = isCountryDisabled || !country;
+  
+  // 1. Email unlocks after Username is valid and not in use
+  const isEmailDisabled = isUsernameDisabled || !username.trim() || Boolean(usernameError);
+  
+  // 2. Password & Confirm Password unlock together after Email is valid
+  const isPasswordDisabled = isEmailDisabled || !email.trim() || Boolean(emailError);
+  const isConfirmPasswordDisabled = isPasswordDisabled;
+
+  // 3. Pin & Confirm Pin unlock together after Password fields are completed
+  const isPinDisabled = isConfirmPasswordDisabled || !password || !confirmPassword || Boolean(passwordError);
+  const isConfirmPinDisabled = isPinDisabled;
+
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: 120 }, (_, i) => String(currentYear - i));
+  const days = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, "0"));
+
+  // Helper to clear all other field errors except the currently active one
+  const clearErrorsExcept = (activeField: string) => {
+    if (activeField !== "firstName") setFirstNameError("");
+    if (activeField !== "lastName") setLastNameError("");
+    if (activeField !== "dob") setDobError("");
+    if (activeField !== "username") setUsernameError("");
+    if (activeField !== "email") setEmailError("");
+    if (activeField !== "password") setPasswordError("");
+    if (activeField !== "pin") setPinError("");
+  };
+
+  // Complete clean slate form wiper
+  const resetFormState = () => {
+    setError("");
+    setEmail("");
+    setPassword("");
+    setConfirmPassword("");
+    setPin("");
+    setConfirmPin("");
+    setFirstName("");
+    setLastName("");
+    setUsername("");
+    setDobDay("");
+    setDobMonth("");
+    setDobYear("");
+    setPhoneCode("+61");
+    setMobileNumber("");
+    setGender("");
+    setReligion("");
+    setEmploymentStatus("");
+    setPhotoFile(null);
+    setPhotoPreview(null);
+    setStreetAddress1("");
+    setStreetAddress2("");
+    setCity("");
+    setStateProvince("");
+    setPostcode("");
+    setCountry("Australia");
+    setFirstNameError("");
+    setLastNameError("");
+    setUsernameError("");
+    setEmailError("");
+    setPasswordError("");
+    setPinError("");
+    setDobError("");
+    setPhotoError(false);
+    setLoginStep("CREDENTIALS");
+    setTempUserId(null);
+  };
+
+  const getCombinedDob = () => {
+    if (!dobDay || !dobMonth || !dobYear) return "";
+    return `${dobYear}-${dobMonth}-${dobDay}`;
+  };
 
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -321,63 +432,148 @@ export default function LoginPage() {
     }
   };
 
+  // Instant blur & character checkers with single-warning isolation
   const checkFirstName = () => {
     const nameRegex = /[^a-zA-Z\s'-]/;
-    if (firstName.trim() && nameRegex.test(firstName)) {
+    if (!firstName.trim()) {
+      setFirstNameError("First name is required.");
+    } else if (nameRegex.test(firstName)) {
       setFirstNameError("Not Legal");
     } else {
       setFirstNameError("");
     }
+    clearErrorsExcept("firstName");
   };
 
   const checkLastName = () => {
     const nameRegex = /[^a-zA-Z\s'-]/;
-    if (lastName.trim() && nameRegex.test(lastName)) {
+    if (!lastName.trim()) {
+      setLastNameError("Last name is required.");
+    } else if (nameRegex.test(lastName)) {
       setLastNameError("Not Legal");
     } else {
       setLastNameError("");
     }
+    clearErrorsExcept("lastName");
   };
 
-  const checkEmail = () => {
-    if (email.trim() && !email.includes("@")) {
+  const checkDobLive = (day: string, month: string, year: string) => {
+    if (!day || !month || !year) {
+      setDobError("Date of birth is incomplete.");
+      clearErrorsExcept("dob");
+      return;
+    }
+    const combined = `${year}-${month}-${day}`;
+    const selectedDate = new Date(combined);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (selectedDate > today) {
+      setDobError("Cannot be in the future.");
+    } else {
+      setDobError("");
+    }
+    clearErrorsExcept("dob");
+  };
+
+  const checkEmail = async (currentVal?: string) => {
+    const val = (currentVal !== undefined ? currentVal : email).trim();
+    if (!val) {
+      setEmailError(view === "SIGNUP" ? "Email is required." : "Email or username is required.");
+      clearErrorsExcept("email");
+      return;
+    }
+    
+    // Only require @ symbol validation for SIGNUP. SIGNIN can accept usernames without @.
+    if (view === "SIGNUP" && !val.includes("@")) {
       setEmailError("Must contain @");
+      clearErrorsExcept("email");
+      return;
+    }
+
+    if (view === "SIGNUP") {
+      const cleanEmail = val.toLowerCase();
+      const { data: existingEmail } = await supabase
+        .from("profiles")
+        .select("id")
+        .ilike("email", cleanEmail)
+        .maybeSingle();
+
+      if (existingEmail) {
+        setEmailError("Already registered.");
+      } else {
+        setEmailError("");
+      }
     } else {
       setEmailError("");
     }
+    clearErrorsExcept("email");
+  };
+
+  const checkPasswordsLive = (pwd: string, confirmPwd: string) => {
+    setPassword(pwd);
+    setConfirmPassword(confirmPwd);
+    if (confirmPwd && pwd !== confirmPwd) {
+      setPasswordError("Passwords do not match.");
+    } else {
+      setPasswordError("");
+    }
+    clearErrorsExcept("password");
+  };
+
+  const checkPinLive = (p: string, confirmP: string) => {
+    setPin(p);
+    setConfirmPin(confirmP);
+    const pinRegex = /\D/;
+    if (confirmP && pinRegex.test(confirmP)) {
+      setPinError("Digits only required.");
+    } else if (confirmP && confirmP.length > 6) {
+      setPinError("Must be exactly 6 digits.");
+    } else if (confirmP && p !== confirmP) {
+      setPinError("PINs do not match.");
+    } else {
+      setPinError("");
+    }
+    clearErrorsExcept("pin");
   };
 
   const checkPin = () => {
     const pinRegex = /\D/;
-    if (pin.trim() && pinRegex.test(pin)) {
+    if (!pin) {
+      setPinError("PIN is required.");
+    } else if (pinRegex.test(pin)) {
       setPinError("Digits only required.");
-    } else if (pin.trim() && pin.length !== 6) {
+    } else if (pin.length !== 6) {
       setPinError("Must be exactly 6 digits.");
     } else {
       setPinError("");
     }
+    clearErrorsExcept("pin");
   };
 
-  const checkUsernameAvailability = async () => {
-    const cleanUser = username.trim().toLowerCase();
+  const checkUsernameAvailability = async (currentVal?: string) => {
+    const cleanUser = (currentVal !== undefined ? currentVal : username).trim().toLowerCase();
     if (!cleanUser) {
-      setUsernameError("");
+      setUsernameError("Username is required.");
+      clearErrorsExcept("username");
       return;
     }
 
     if (cleanUser.length < 5 || cleanUser.length > 20) {
       setUsernameError("Must be 5–20 characters.");
+      clearErrorsExcept("username");
       return;
     }
 
     const alphanumericRegex = /^[a-zA-Z0-9]+$/;
     if (!alphanumericRegex.test(cleanUser)) {
       setUsernameError("Letters and numbers only.");
+      clearErrorsExcept("username");
       return;
     }
 
     if (RESERVED_USERNAMES.includes(cleanUser)) {
       setUsernameError("Username is reserved.");
+      clearErrorsExcept("username");
       return;
     }
 
@@ -392,31 +588,7 @@ export default function LoginPage() {
     } else {
       setUsernameError("");
     }
-  };
-
-  const checkEmailAvailability = async () => {
-    const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail) {
-      setEmailError("");
-      return;
-    }
-
-    if (!cleanEmail.includes("@")) {
-      setEmailError("Must contain @");
-      return;
-    }
-
-    const { data: existingEmail } = await supabase
-      .from("profiles")
-      .select("id")
-      .ilike("email", cleanEmail)
-      .maybeSingle();
-
-    if (existingEmail) {
-      setEmailError("Already registered.");
-    } else {
-      setEmailError("");
-    }
+    clearErrorsExcept("username");
   };
 
   const handleAuth = async (e: React.FormEvent) => {
@@ -432,8 +604,33 @@ export default function LoginPage() {
         return;
       }
 
-      if (!firstName.trim() || !lastName.trim() || !username.trim() || !dob || !gender || !religion || !employmentStatus || !streetAddress1.trim() || !city.trim() || !stateProvince.trim() || !postcode.trim() || !email.trim() || !password.trim() || !pin.trim()) {
+      const finalDob = getCombinedDob();
+      if (!firstName.trim() || !lastName.trim() || !username.trim() || !finalDob || !gender || !religion || !employmentStatus || !streetAddress1.trim() || !city.trim() || !stateProvince.trim() || !postcode.trim() || !email.trim() || !password.trim() || !confirmPassword.trim() || !pin.trim() || !confirmPin.trim()) {
         setError("Please fill out all required address, password, and PIN fields.");
+        setLoading(false);
+        return;
+      }
+
+      const selectedDate = new Date(finalDob);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (selectedDate > today) {
+        setError("Date of birth cannot be in the future.");
+        setDobError("Cannot be in the future.");
+        setLoading(false);
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        setError("Passwords do not match.");
+        setPasswordError("Passwords do not match.");
+        setLoading(false);
+        return;
+      }
+
+      if (pin !== confirmPin) {
+        setError("2FA PINs do not match.");
+        setPinError("PINs do not match.");
         setLoading(false);
         return;
       }
@@ -519,7 +716,7 @@ export default function LoginPage() {
         .select("id")
         .eq("first_name", firstName.trim())
         .eq("last_name", lastName.trim())
-        .eq("dob", dob)
+        .eq("dob", finalDob)
         .eq("address", fullFormattedAddress);
 
       if (existingProfiles && existingProfiles.length > 0) {
@@ -569,7 +766,7 @@ export default function LoginPage() {
           username: username.trim(),
           first_name: firstName.trim(),
           last_name: lastName.trim(),
-          dob: dob,
+          dob: finalDob,
           address: fullFormattedAddress,
           email: cleanEmail,
           mobile_phone: fullMobile,
@@ -601,8 +798,26 @@ export default function LoginPage() {
       }
     } else if (view === "SIGNIN") {
       if (loginStep === "CREDENTIALS") {
+        let loginIdentifier = email.trim();
+        let targetEmail = loginIdentifier;
+
+        if (!loginIdentifier.includes("@")) {
+          const { data: profileData, error: profileError } = await supabase
+            .from("profiles")
+            .select("email")
+            .ilike("username", loginIdentifier)
+            .maybeSingle();
+
+          if (profileError || !profileData || !profileData.email) {
+            setError("No account found with this username or email.");
+            setLoading(false);
+            return;
+          }
+          targetEmail = profileData.email;
+        }
+
         const { data, error } = await supabase.auth.signInWithPassword({ 
-          email: email.trim(), 
+          email: targetEmail, 
           password: password.trim() 
         });
         
@@ -659,8 +874,8 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-start py-8 px-4 font-sans overflow-y-auto">
-      <div className="bg-black md:bg-zinc-950 rounded-2xl shadow-2xl w-full max-w-xl p-6 sm:p-8 space-y-6 text-white my-auto md:my-0">
+    <div className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-start pt-0 sm:pt-8 pb-8 px-2 sm:px-4 font-sans overflow-y-auto">
+      <div className="bg-black md:bg-zinc-950 rounded-none sm:rounded-2xl shadow-2xl w-full max-w-xl p-4 sm:p-8 space-y-6 text-white mt-0 sm:my-auto">
         
         <div className="flex items-start justify-between pb-4">
           <div className="flex items-start gap-3">
@@ -673,10 +888,33 @@ export default function LoginPage() {
             </div>
           </div>
           <div className="text-xs font-bold text-white tracking-wide shrink-0 pt-1">
-            {view === "SIGNUP" ? "REGISTRATION FORM" : loginStep === "PIN_VERIFY" ? "2FA VERIFICATION" : "SECURE LOGIN"}
+            {loginStep === "PIN_VERIFY" ? "2FA VERIFICATION" : ""}
           </div>
         </div>
 
+        {/* Top Tab Switcher ("Sign In" and "Register") */}
+        <div className="flex border-b border-zinc-800">
+          <button
+            type="button"
+            onClick={() => { resetFormState(); setView("SIGNIN"); }}
+            className={`flex-1 py-6 text-xl font-black uppercase tracking-wider border-b-8 transition cursor-pointer text-center ${
+              view === "SIGNIN" ? "border-[#e7b833] text-[#e7b833]" : "border-transparent text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            Sign In
+          </button>
+          <button
+            type="button"
+            onClick={() => { resetFormState(); setView("SIGNUP"); }}
+            className={`flex-1 py-6 text-xl font-black uppercase tracking-wider border-b-8 transition cursor-pointer text-center ${
+              view === "SIGNUP" ? "border-[#e7b833] text-[#e7b833]" : "border-transparent text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            Register
+          </button>
+        </div>
+
+        {/* Top Error / Warning Banner */}
         {error && (
           <div className="bg-rose-950/60 border border-rose-800 text-rose-300 text-xs p-3 rounded font-medium">
             {error}
@@ -685,11 +923,11 @@ export default function LoginPage() {
 
         <form onSubmit={handleAuth} className="space-y-4">
           {view === "SIGNUP" && (
-            <div className="space-y-4">
+            <div className="space-y-5">
               {/* Profile Identity Photo Upload Box at the Very Top */}
               <div className="flex flex-col items-center justify-center pb-2">
                 <div className="mb-2 text-center">
-                  <label className="block text-[11px] font-bold text-gray-300 uppercase tracking-tight">PROFILE IDENTITY PHOTO</label>
+                  <span className="block text-[11px] font-extrabold text-gray-200 uppercase tracking-wide">Profile Identity Photo (Mandatory)</span>
                 </div>
                 <label className={`relative w-28 h-36 border-2 border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer bg-zinc-700 transition overflow-hidden group ${
                   photoError ? "border-rose-500 bg-rose-950/30" : "border-zinc-500 hover:border-[#e7b833] hover:bg-zinc-600"
@@ -712,127 +950,172 @@ export default function LoginPage() {
                   />
                 </label>
                 <span className="text-[10px] text-gray-400 mt-1">Clear face portrait (JPEG, PNG)</span>
+                {!photoFile && (
+                  <span className="text-[11px] text-amber-400 font-bold mt-2 text-center animate-pulse">
+                    🔒 Please upload a profile photo above to unlock the registration form.
+                  </span>
+                )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Personal Information Section */}
+              <div className="space-y-3 pt-2">
+                <span className="block text-[11px] font-extrabold text-gray-200 uppercase tracking-wide">Personal Information</span>
+                
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-[11px] font-bold text-gray-300 uppercase">Legal First Name</label>
+                      {firstNameError && (
+                        <span className="text-[10px] font-bold text-rose-400">{firstNameError}</span>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      disabled={isFirstNameDisabled}
+                      value={firstName}
+                      onFocus={() => setFirstNameError("")}
+                      onChange={(e) => {
+                        setFirstName(e.target.value);
+                        if (firstNameError) setFirstNameError("");
+                      }}
+                      onBlur={checkFirstName}
+                      placeholder=""
+                      className={`w-full border rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed ${
+                        firstNameError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
+                      }`}
+                    />
+                  </div>
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-[11px] font-bold text-gray-300 uppercase">Legal Last Name</label>
+                      {lastNameError && (
+                        <span className="text-[10px] font-bold text-rose-400">{lastNameError}</span>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      disabled={isLastNameDisabled}
+                      value={lastName}
+                      onFocus={() => setLastNameError("")}
+                      onChange={(e) => {
+                        setLastName(e.target.value);
+                        if (lastNameError) setLastNameError("");
+                      }}
+                      onBlur={checkLastName}
+                      placeholder=""
+                      className={`w-full border rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed ${
+                        lastNameError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
+                      }`}
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <div className="flex justify-between items-center mb-1">
-                    <label className="block text-[11px] font-bold text-gray-300 uppercase">Legal First Name</label>
-                    {firstNameError && (
-                      <span className="text-[10px] font-bold text-rose-400">{firstNameError}</span>
+                    <label className="block text-[11px] font-bold text-gray-300 uppercase">Date of Birth</label>
+                    {dobError && (
+                      <span className="text-[10px] font-bold text-rose-400">{dobError}</span>
                     )}
                   </div>
-                  <input
-                    type="text"
-                    required
-                    value={firstName}
-                    onChange={(e) => {
-                      setFirstName(e.target.value);
-                      if (firstNameError) setFirstNameError("");
-                    }}
-                    onBlur={checkFirstName}
-                    placeholder="John"
-                    className={`w-full border rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 ${
-                      firstNameError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
-                    }`}
-                  />
-                </div>
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-[11px] font-bold text-gray-300 uppercase">Legal Last Name</label>
-                    {lastNameError && (
-                      <span className="text-[10px] font-bold text-rose-400">{lastNameError}</span>
-                    )}
+                  <div className="grid grid-cols-3 gap-2">
+                    <select
+                      required
+                      disabled={isDobDayDisabled}
+                      value={dobDay}
+                      onFocus={() => setDobError("")}
+                      onChange={(e) => {
+                        setDobDay(e.target.value);
+                        checkDobLive(e.target.value, dobMonth, dobYear);
+                      }}
+                      onBlur={() => checkDobLive(dobDay, dobMonth, dobYear)}
+                      className="border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <option value="">Day</option>
+                      {days.map((d) => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+
+                    <select
+                      required
+                      disabled={isDobMonthDisabled}
+                      value={dobMonth}
+                      onFocus={() => setDobError("")}
+                      onChange={(e) => {
+                        setDobMonth(e.target.value);
+                        checkDobLive(dobDay, e.target.value, dobYear);
+                      }}
+                      onBlur={() => checkDobLive(dobDay, dobMonth, dobYear)}
+                      className="border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <option value="">Month</option>
+                      {MONTHS.map((m) => (
+                        <option key={m.value} value={m.value}>{m.name}</option>
+                      ))}
+                    </select>
+
+                    <select
+                      required
+                      disabled={isDobYearDisabled}
+                      value={dobYear}
+                      onFocus={() => setDobError("")}
+                      onChange={(e) => {
+                        setDobYear(e.target.value);
+                        checkDobLive(dobDay, dobMonth, e.target.value);
+                      }}
+                      onBlur={() => checkDobLive(dobDay, dobMonth, dobYear)}
+                      className="border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <option value="">Year</option>
+                      {years.map((y) => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </select>
                   </div>
-                  <input
-                    type="text"
-                    required
-                    value={lastName}
-                    onChange={(e) => {
-                      setLastName(e.target.value);
-                      if (lastNameError) setLastNameError("");
-                    }}
-                    onBlur={checkLastName}
-                    placeholder="Smith"
-                    className={`w-full border rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 ${
-                      lastNameError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
-                    }`}
-                  />
                 </div>
-              </div>
 
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="block text-[11px] font-bold text-gray-300 uppercase">Username (Payment ID)</label>
-                  {usernameError && (
-                    <span className="text-[10px] font-bold text-rose-400">{usernameError}</span>
-                  )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-300 uppercase mb-1">Gender</label>
+                    <select
+                      required
+                      disabled={isGenderDisabled}
+                      value={gender}
+                      onChange={(e) => setGender(e.target.value)}
+                      className="w-full border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <option value="">Select Gender</option>
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-300 uppercase mb-1">Religion</label>
+                    <select
+                      required
+                      disabled={isReligionDisabled}
+                      value={religion}
+                      onChange={(e) => setReligion(e.target.value)}
+                      className="w-full border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <option value="">Select Religion</option>
+                      {RELIGIONS.map((r) => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <input
-                  type="text"
-                  required
-                  maxLength={20}
-                  value={username}
-                  onChange={(e) => {
-                    setUsername(e.target.value);
-                    if (usernameError) setUsernameError("");
-                  }}
-                  onBlur={checkUsernameAvailability}
-                  placeholder="johnsmith"
-                  className={`w-full border rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 ${
-                    usernameError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
-                  }`}
-                />
-              </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-300 uppercase mb-1">Date of Birth</label>
-                  <input
-                    type="date"
-                    required
-                    value={dob}
-                    onChange={(e) => setDob(e.target.value)}
-                    className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-300 uppercase mb-1">Gender</label>
-                  <select
-                    required
-                    value={gender}
-                    onChange={(e) => setGender(e.target.value)}
-                    className="w-full border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer"
-                  >
-                    <option value="">Select Gender</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-300 uppercase mb-1">Religion</label>
-                  <select
-                    required
-                    value={religion}
-                    onChange={(e) => setReligion(e.target.value)}
-                    className="w-full border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer"
-                  >
-                    <option value="">Select Religion</option>
-                    {RELIGIONS.map((r) => (
-                      <option key={r} value={r}>{r}</option>
-                    ))}
-                  </select>
-                </div>
                 <div>
                   <label className="block text-[11px] font-bold text-gray-300 uppercase mb-1">Employment Status</label>
                   <select
                     required
+                    disabled={isEmploymentDisabled}
                     value={employmentStatus}
                     onChange={(e) => setEmploymentStatus(e.target.value)}
-                    className="w-full border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer"
+                    className="w-full border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <option value="">Select Status</option>
                     <option value="Employed">Employed</option>
@@ -840,29 +1123,31 @@ export default function LoginPage() {
                     <option value="Student">Student</option>
                   </select>
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-[11px] font-bold text-gray-300 uppercase mb-1">Mobile Phone</label>
-                <div className="grid grid-cols-3 gap-2">
-                  <select
-                    value={phoneCode}
-                    onChange={(e) => setPhoneCode(e.target.value)}
-                    className="border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer"
-                  >
-                    {COUNTRY_DIAL_CODES.map((item, index) => (
-                      <option key={`${item.code}-${index}`} value={item.code}>
-                        {item.code} ({item.country})
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="tel"
-                    value={mobileNumber}
-                    onChange={(e) => setMobileNumber(e.target.value)}
-                    placeholder="Number"
-                    className="col-span-2 border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium placeholder:text-zinc-400"
-                  />
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-300 uppercase mb-1">Mobile Phone</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <select
+                      disabled={isPhoneCodeDisabled}
+                      value={phoneCode}
+                      onChange={(e) => setPhoneCode(e.target.value)}
+                      className="border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {COUNTRY_DIAL_CODES.map((item, index) => (
+                        <option key={`${item.code}-${index}`} value={item.code}>
+                          {item.code} ({item.country})
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="tel"
+                      disabled={isMobileNumberDisabled}
+                      value={mobileNumber}
+                      onChange={(e) => setMobileNumber(e.target.value)}
+                      placeholder=""
+                      className="col-span-2 border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium placeholder:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -875,10 +1160,11 @@ export default function LoginPage() {
                   <input
                     type="text"
                     required
+                    disabled={isStreet1Disabled}
                     value={streetAddress1}
                     onChange={(e) => setStreetAddress1(e.target.value)}
-                    placeholder="Street number and name"
-                    className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium placeholder:text-zinc-400"
+                    placeholder=""
+                    className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium placeholder:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed"
                   />
                 </div>
 
@@ -886,10 +1172,11 @@ export default function LoginPage() {
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Apartment, Suite, Unit, Building (Optional)</label>
                   <input
                     type="text"
+                    disabled={isStreet2Disabled}
                     value={streetAddress2}
                     onChange={(e) => setStreetAddress2(e.target.value)}
-                    placeholder="Apt, Suite, Floor, etc."
-                    className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium placeholder:text-zinc-400"
+                    placeholder=""
+                    className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium placeholder:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed"
                   />
                 </div>
 
@@ -899,9 +1186,10 @@ export default function LoginPage() {
                     <input
                       type="text"
                       required
+                      disabled={isCityDisabled}
                       value={city}
                       onChange={(e) => setCity(e.target.value)}
-                      className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium"
+                      className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
                     />
                   </div>
                   <div>
@@ -909,9 +1197,10 @@ export default function LoginPage() {
                     <input
                       type="text"
                       required
+                      disabled={isStateDisabled}
                       value={stateProvince}
                       onChange={(e) => setStateProvince(e.target.value)}
-                      className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium"
+                      className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
                     />
                   </div>
                 </div>
@@ -922,17 +1211,19 @@ export default function LoginPage() {
                     <input
                       type="text"
                       required
+                      disabled={isPostcodeDisabled}
                       value={postcode}
                       onChange={(e) => setPostcode(e.target.value)}
-                      className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium"
+                      className="w-full border border-zinc-500 bg-zinc-700 rounded p-2 text-xs text-white focus:outline-none focus:border-[#e7b833] font-medium disabled:opacity-40 disabled:cursor-not-allowed"
                     />
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Country</label>
                     <select
+                      disabled={isCountryDisabled}
                       value={country}
                       onChange={(e) => setCountry(e.target.value)}
-                      className="w-full border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer"
+                      className="w-full border border-zinc-500 rounded p-2 text-xs text-white bg-zinc-700 focus:outline-none focus:border-[#e7b833] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {COUNTRIES.map((c, index) => (
                         <option key={`${c}-${index}`} value={c}>{c}</option>
@@ -941,10 +1232,226 @@ export default function LoginPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Login Credentials Section */}
+              <div className="space-y-3 pt-2">
+                <span className="block text-[11px] font-extrabold text-gray-200 uppercase tracking-wide">Login Credentials</span>
+
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[11px] font-bold text-gray-300 uppercase">Username (Payment ID)</label>
+                    {usernameError && (
+                      <span className="text-[10px] font-bold text-rose-400">{usernameError}</span>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    maxLength={20}
+                    disabled={isUsernameDisabled}
+                    value={username}
+                    onFocus={() => setUsernameError("")}
+                    onChange={(e) => {
+                      setUsername(e.target.value);
+                      checkUsernameAvailability(e.target.value);
+                    }}
+                    onBlur={() => checkUsernameAvailability(username)}
+                    placeholder=""
+                    className={`w-full border rounded p-2.5 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed ${
+                      usernameError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[11px] font-bold text-gray-300 uppercase">Email Address</label>
+                    {emailError && (
+                      <span className="text-[10px] font-bold text-rose-400">{emailError}</span>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    disabled={isEmailDisabled}
+                    value={email}
+                    onFocus={() => setEmailError("")}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      checkEmail(e.target.value);
+                    }}
+                    onBlur={() => checkEmail(email)}
+                    placeholder=""
+                    className={`w-full border rounded p-2.5 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed ${
+                      emailError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[11px] font-bold text-gray-300 uppercase">Create Password</label>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      required
+                      disabled={isPasswordDisabled}
+                      value={password}
+                      onFocus={() => setPasswordError("")}
+                      onChange={(e) => {
+                        checkPasswordsLive(e.target.value, confirmPassword);
+                      }}
+                      placeholder=""
+                      className="w-full border border-zinc-500 bg-zinc-700 rounded p-2.5 pr-10 text-xs text-white focus:outline-none font-medium placeholder:text-zinc-400 focus:border-[#e7b833] disabled:opacity-40 disabled:cursor-not-allowed"
+                    />
+                    <button
+                      type="button"
+                      disabled={isPasswordDisabled}
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white focus:outline-none cursor-pointer"
+                    >
+                      {showPassword ? (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[11px] font-bold text-gray-300 uppercase">Confirm Password</label>
+                    {passwordError && (
+                      <span className="text-[10px] font-bold text-rose-400">{passwordError}</span>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      required
+                      disabled={isConfirmPasswordDisabled}
+                      value={confirmPassword}
+                      onFocus={() => setPasswordError("")}
+                      onChange={(e) => {
+                        checkPasswordsLive(password, e.target.value);
+                      }}
+                      placeholder=""
+                      className={`w-full border rounded p-2.5 pr-10 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed ${
+                        passwordError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      disabled={isConfirmPasswordDisabled}
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white focus:outline-none cursor-pointer"
+                    >
+                      {showPassword ? (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[11px] font-bold text-gray-300 uppercase">Create 2FA Pin (6 Digits)</label>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showPin ? "text" : "password"}
+                      required
+                      maxLength={6}
+                      disabled={isPinDisabled}
+                      value={pin}
+                      onFocus={() => setPinError("")}
+                      onChange={(e) => {
+                        checkPinLive(e.target.value, confirmPin);
+                      }}
+                      placeholder=""
+                      className="w-full border border-zinc-500 bg-zinc-700 rounded p-2.5 pr-10 text-xs text-white focus:outline-none font-mono tracking-widest placeholder:text-zinc-400 focus:border-[#e7b833] disabled:opacity-40 disabled:cursor-not-allowed"
+                    />
+                    <button
+                      type="button"
+                      disabled={isPinDisabled}
+                      onClick={() => setShowPin(!showPin)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white focus:outline-none cursor-pointer"
+                    >
+                      {showPin ? (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[11px] font-bold text-gray-300 uppercase">Confirm 2FA Pin</label>
+                    {pinError && (
+                      <span className="text-[10px] font-bold text-rose-400">{pinError}</span>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showPin ? "text" : "password"}
+                      required
+                      maxLength={6}
+                      disabled={isConfirmPinDisabled}
+                      value={confirmPin}
+                      onFocus={() => setPinError("")}
+                      onChange={(e) => {
+                        checkPinLive(pin, e.target.value);
+                      }}
+                      placeholder=""
+                      className={`w-full border rounded p-2.5 pr-10 text-xs text-white bg-zinc-700 focus:outline-none font-mono tracking-widest placeholder:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed ${
+                        pinError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      disabled={isConfirmPinDisabled}
+                      onClick={() => setShowPin(!showPin)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white focus:outline-none cursor-pointer"
+                    >
+                      {showPin ? (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
-          {/* Step 1: Credentials (Email + Password) or Step 2: 2FA PIN Verification */}
+          {/* Step 1: Credentials (Email/Username + Password) or Step 2: 2FA PIN Verification */}
           {view === "SIGNIN" && loginStep === "PIN_VERIFY" ? (
             <div className="space-y-4 pt-2">
               <div className="bg-zinc-900 border border-zinc-700 text-amber-300 text-xs p-3 rounded font-medium">
@@ -957,26 +1464,44 @@ export default function LoginPage() {
                     <span className="text-[10px] font-bold text-rose-400">{pinError}</span>
                   )}
                 </div>
-                <input
-                  type={showPin ? "text" : "password"}
-                  required
-                  maxLength={6}
-                  value={pin}
-                  onChange={(e) => {
-                    setPin(e.target.value);
-                    if (pinError) setPinError("");
-                  }}
-                  onBlur={checkPin}
-                  placeholder="••••••"
-                  className="w-full border border-zinc-500 bg-zinc-700 rounded p-3 text-center text-white text-lg tracking-widest font-mono focus:outline-none focus:border-[#e7b833]"
-                />
+                <div className="relative">
+                  <input
+                    type={showPin ? "text" : "password"}
+                    required
+                    maxLength={6}
+                    value={pin}
+                    onChange={(e) => {
+                      setPin(e.target.value);
+                      if (pinError) setPinError("");
+                    }}
+                    onBlur={checkPin}
+                    placeholder=""
+                    className="w-full border border-zinc-500 bg-zinc-700 rounded p-3 pr-10 text-center text-white text-lg tracking-widest font-mono focus:outline-none focus:border-[#e7b833]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPin(!showPin)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white focus:outline-none cursor-pointer"
+                  >
+                    {showPin ? (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           ) : view === "SIGNIN" && (
             <div className="space-y-4 pt-2">
               <div>
                 <div className="flex justify-between items-center mb-1">
-                  <label className="block text-[11px] font-bold text-gray-300 uppercase">Email Address</label>
+                  <label className="block text-[11px] font-bold text-gray-300 uppercase">Email Address / Username</label>
                   {emailError && (
                     <span className="text-[10px] font-bold text-rose-400">{emailError}</span>
                   )}
@@ -992,7 +1517,7 @@ export default function LoginPage() {
                   onBlur={() => {
                     checkEmail();
                   }}
-                  placeholder="john.smith@example.com"
+                  placeholder=""
                   className={`w-full border rounded p-3 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 ${
                     emailError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
                   }`}
@@ -1009,7 +1534,7 @@ export default function LoginPage() {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter password"
+                    placeholder=""
                     className="w-full border border-zinc-500 bg-zinc-700 rounded p-3 pr-10 text-xs text-white focus:outline-none font-medium placeholder:text-zinc-400 focus:border-[#e7b833]"
                   />
                   <button
@@ -1033,139 +1558,14 @@ export default function LoginPage() {
             </div>
           )}
 
-          {/* For Sign Up Email and Password fields */}
-          {view === "SIGNUP" && (
-            <div className="space-y-4 pt-2">
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="block text-[11px] font-bold text-gray-300 uppercase">Email Address</label>
-                  {emailError && (
-                    <span className="text-[10px] font-bold text-rose-400">{emailError}</span>
-                  )}
-                </div>
-                <input
-                  type="text"
-                  required
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    if (emailError) setEmailError("");
-                  }}
-                  onBlur={() => {
-                    checkEmail();
-                    if (view === "SIGNUP") checkEmailAvailability();
-                  }}
-                  placeholder="john.smith@example.com"
-                  className={`w-full border rounded p-2.5 text-xs text-white bg-zinc-700 focus:outline-none font-medium placeholder:text-zinc-400 ${
-                    emailError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
-                  }`}
-                />
-              </div>
-
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="block text-[11px] font-bold text-gray-300 uppercase">Password</label>
-                </div>
-                <div className="relative">
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter password"
-                    className="w-full border border-zinc-500 bg-zinc-700 rounded p-2.5 pr-10 text-xs text-white focus:outline-none font-medium placeholder:text-zinc-400 focus:border-[#e7b833]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white focus:outline-none cursor-pointer"
-                  >
-                    {showPassword ? (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="block text-[11px] font-bold text-gray-300 uppercase">Security 2FA PIN (6 digits)</label>
-                  {pinError && (
-                    <span className="text-[10px] font-bold text-rose-400">{pinError}</span>
-                  )}
-                </div>
-                <div className="relative">
-                  <input
-                    type={showPin ? "text" : "password"}
-                    required
-                    maxLength={6}
-                    value={pin}
-                    onChange={(e) => {
-                      setPin(e.target.value);
-                      if (pinError) setPinError("");
-                    }}
-                    onBlur={checkPin}
-                    placeholder="••••••"
-                    className={`w-full border rounded p-2.5 pr-10 text-xs text-white bg-zinc-700 focus:outline-none font-mono tracking-widest placeholder:text-zinc-400 ${
-                      pinError ? "border-rose-500 bg-rose-950/30 focus:border-rose-600" : "border-zinc-500 focus:border-[#e7b833]"
-                    }`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPin(!showPin)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white focus:outline-none cursor-pointer"
-                  >
-                    {showPin ? (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || (view === "SIGNUP" && !photoFile)}
             className="w-full py-3.5 rounded-xl text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] disabled:opacity-50 text-gray-900 shadow-md transition cursor-pointer uppercase tracking-wider mt-2"
           >
             {loading ? "Processing..." : view === "SIGNUP" ? "Submit Account Application" : loginStep === "PIN_VERIFY" ? "Complete Sign In" : "Sign In to Dashboard"}
           </button>
         </form>
-
-        <div className="text-center pt-2">
-          {view === "SIGNUP" ? (
-            <button
-              type="button"
-              onClick={() => { setError(""); setView("SIGNIN"); setLoginStep("CREDENTIALS"); }}
-              className="text-xs text-[#e7b833] hover:underline cursor-pointer font-medium"
-            >
-              Already have an account? Sign in here
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => { setError(""); setView("SIGNUP"); setLoginStep("CREDENTIALS"); }}
-              className="text-xs text-[#e7b833] hover:underline cursor-pointer font-medium"
-            >
-              Need an account? Register here
-            </button>
-          )}
-        </div>
 
       </div>
     </div>

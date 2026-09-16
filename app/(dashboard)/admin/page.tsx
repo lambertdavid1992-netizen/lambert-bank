@@ -85,27 +85,19 @@ export default function AdminDashboard() {
       .update({ is_approved: true, session_start_timestamp: nowIso })
       .eq("user_id", userId);
 
-    if (error) {
-      alert("Error approving account: " + error.message);
-    } else {
+    if (!error) {
       setPendingUsers(pendingUsers.filter(u => u.user_id !== userId));
-      alert("Account successfully approved and session timer initialized!");
     }
   };
 
   const handleReject = async (userId: string) => {
-    if (!confirm("Are you sure you want to reject and delete this application?")) return;
-
     const { error } = await supabase
       .from("profiles")
       .delete()
       .eq("user_id", userId);
 
-    if (error) {
-      alert("Error rejecting account: " + error.message);
-    } else {
+    if (!error) {
       setPendingUsers(pendingUsers.filter(u => u.user_id !== userId));
-      alert("Application rejected and removed.");
     }
   };
 
@@ -167,16 +159,16 @@ export default function AdminDashboard() {
                       <span className="text-[10px] text-gray-400">No Img</span>
                     )}
                   </div>
-                  <div className="flex-1 flex justify-between items-start">
+                  <div className="flex-1 flex flex-col items-start gap-1">
+                    <span className="px-2.5 py-1 bg-amber-100 text-amber-800 text-[10px] font-black uppercase rounded-full tracking-wider">
+                      Pending Review
+                    </span>
                     <div>
                       <h3 className="text-sm font-black text-gray-900 uppercase">
                         {user.first_name} {user.last_name}
                       </h3>
                       <p className="text-xs font-mono text-blue-600 font-bold">@{user.username}</p>
                     </div>
-                    <span className="px-2.5 py-1 bg-amber-100 text-amber-800 text-[10px] font-black uppercase rounded-full tracking-wider">
-                      Pending Review
-                    </span>
                   </div>
                 </div>
 
@@ -197,17 +189,17 @@ export default function AdminDashboard() {
                 <div className="flex gap-3 pt-3 border-t border-gray-200">
                   <button
                     type="button"
-                    onClick={() => handleApprove(user.user_id)}
-                    className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold uppercase tracking-wider shadow transition cursor-pointer"
-                  >
-                    ✓ Approve Account
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => handleReject(user.user_id)}
                     className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold uppercase tracking-wider shadow transition cursor-pointer"
                   >
-                    ✕ Reject & Delete
+                    ✕ Reject
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApprove(user.user_id)}
+                    className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold uppercase tracking-wider shadow transition cursor-pointer"
+                  >
+                    ✓ Accept
                   </button>
                 </div>
 

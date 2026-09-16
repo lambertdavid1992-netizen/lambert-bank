@@ -45,11 +45,20 @@ export default function MessagesPage() {
   const [inputText, setInputText] = useState<string>("");
   const [showEmojiPicker, setShowEmojiPicker] = useState<boolean>(false);
 
+  // Click & Hold reaction menu state
+  const [reactionMenuState, setReactionMenuState] = useState<{
+    msgId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   // Modal state for wiping chat history
   const [showWipeModal, setShowWipeModal] = useState<boolean>(false);
   const [wipeTargetUser, setWipeTargetUser] = useState<string>("");
   
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const isKingDavid = currentUsername.toLowerCase() === "kingdavid";
 
@@ -312,6 +321,11 @@ export default function MessagesPage() {
     setInputText("");
     setShowEmojiPicker(false);
 
+    // Reset textarea height to initial state
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
+
     const { error } = await supabase.from("messages").insert({
       sender_username: currentUsername,
       recipient_username: selectedFriend,
@@ -343,6 +357,35 @@ export default function MessagesPage() {
 
     if (error) {
       console.error("Failed to update reaction:", error);
+    }
+    setReactionMenuState(null);
+  };
+
+  // Click & Hold handlers for mobile/desktop reaction menu placement
+  const handleBubbleClick = (msgId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setReactionMenuState({
+      msgId,
+      x: e.clientX,
+      y: e.clientY,
+    });
+  };
+
+  const handleTouchStart = (msgId: string, e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    longPressTimerRef.current = setTimeout(() => {
+      setReactionMenuState({
+        msgId,
+        x: touch.clientX,
+        y: touch.clientY,
+      });
+    }, 500); // 500ms long press
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
     }
   };
 
@@ -420,7 +463,7 @@ export default function MessagesPage() {
               value={searchQuery}
               disabled={!isApproved}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-7 py-1.5 text-xs bg-gray-100 border border-gray-200 rounded-lg focus:outline-none focus:border-[#e7b833] focus:bg-white transition text-gray-900 font-medium placeholder:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full pl-8 pr-7 py-1.5 text-base md:text-xs bg-gray-100 border border-gray-200 rounded-lg focus:outline-none focus:border-[#e7b833] focus:bg-white transition text-gray-900 font-medium placeholder:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
             />
             {searchQuery && isApproved && (
               <button
@@ -506,26 +549,27 @@ export default function MessagesPage() {
       </div>
 
       {/* Active Chat Window */}
-      <div className={`flex flex-col overflow-hidden bg-white ${!selectedFriend ? "hidden md:flex md:col-span-3 md:h-full" : "fixed inset-0 z-50 md:static md:inset-auto md:z-auto md:col-span-3 md:h-full"}`}>
+      <div className={`flex flex-col overflow-hidden bg-white ${!selectedFriend ? "hidden md:flex md:col-span-3 md:h-full" : "fixed inset-x-0 bottom-0 top-16 z-50 md:static md:inset-auto md:z-auto md:col-span-3 md:h-full"}`}>
         {selectedFriend ? (
           <>
             <div className="p-4 border-b border-gray-200 bg-white flex items-center justify-between shadow-2xs shrink-0 relative">
               <button
                 type="button"
                 onClick={() => setSelectedFriend(null)}
-                className="md:hidden text-gray-600 hover:text-gray-900 p-1 rounded-lg hover:bg-gray-100 transition cursor-pointer flex items-center z-10"
+                className="text-gray-600 hover:text-gray-900 px-2.5 py-1 rounded-lg hover:bg-gray-100 transition cursor-pointer flex items-center gap-1.5 z-10 font-bold text-xs uppercase"
                 title="Back to conversations"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
                 </svg>
+                <span>Back</span>
               </button>
 
               <div className="absolute inset-x-0 flex items-center justify-center pointer-events-none">
                 <span className="font-bold text-xs text-gray-900">@{selectedFriend}</span>
               </div>
 
-              <div className="md:hidden w-7" />
+              <div className="w-12" />
             </div>
 
             {!isApproved && (
@@ -535,7 +579,10 @@ export default function MessagesPage() {
             )}
 
             {/* Messages Scroll Area */}
-            <div ref={messagesContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 bg-gray-50/30">
+            <div 
+              ref={messagesContainerRef} 
+              className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 bg-gray-50/30 relative"
+            >
               {messages.length === 0 ? (
                 <div className="h-full flex items-center justify-center text-xs text-gray-400">
                   No messages yet with @{selectedFriend}. Send a message below!
@@ -544,28 +591,27 @@ export default function MessagesPage() {
                 messages.map((msg) => {
                   const isMe = msg.sender_username.toLowerCase() === currentUsername.toLowerCase();
                   const reactionsObj = msg.reactions || {};
-                  const reactionEntries = Object.entries(reactionsObj);
+                  
+                  // Order reactions: other users' reactions on the left, current user's reaction on the far right (first right place)
+                  const myReaction = currentUsername ? reactionsObj[currentUsername] : null;
+                  const otherReactionEntries = Object.entries(reactionsObj).filter(
+                    ([user]) => user.toLowerCase() !== currentUsername.toLowerCase()
+                  );
+                  const orderedEmojis = [
+                    ...otherReactionEntries.map(([_, emoji]) => emoji),
+                    ...(myReaction ? [myReaction] : [])
+                  ];
 
                   return (
-                    <div key={msg.id} className={`flex flex-col relative group ${isMe ? "items-end" : "items-start"}`}>
+                    <div key={msg.id} className={`flex flex-col relative ${isMe ? "items-end" : "items-start"}`}>
                       
-                      {/* Floating Messenger-style Reaction Bar on Hover */}
-                      <div className={`absolute -top-7 hidden group-hover:flex items-center gap-1 bg-white border border-gray-200 shadow-md rounded-full px-2 py-1 z-20 ${isMe ? "right-0" : "left-0"}`}>
-                        {REACTION_EMOJIS.map((emoji) => (
-                          <button
-                            key={emoji}
-                            type="button"
-                            onClick={() => handleReaction(msg.id, emoji, reactionsObj)}
-                            className="hover:scale-125 transition-transform text-sm px-1 cursor-pointer"
-                            title={`React with ${emoji}`}
-                          >
-                            {emoji}
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* Message Bubble Wrapper */}
-                      <div className="relative w-fit max-w-[75%] mb-4">
+                      {/* Message Bubble Wrapper with Click & Touch Events */}
+                      <div
+                        onClick={(e) => handleBubbleClick(msg.id, e)}
+                        onTouchStart={(e) => handleTouchStart(msg.id, e)}
+                        onTouchEnd={handleTouchEnd}
+                        className="relative w-fit max-w-[75%] mb-4 cursor-pointer"
+                      >
                         <div
                           className={`rounded-2xl px-4 pt-2.5 pb-3.5 text-xs shadow-2xs break-words whitespace-pre-wrap ${
                             isMe ? "bg-black text-white font-medium rounded-br-xs" : "bg-white border border-gray-200 text-gray-800 rounded-bl-xs"
@@ -575,21 +621,13 @@ export default function MessagesPage() {
                         </div>
 
                         {/* Interactive Reaction Pills Display */}
-                        {reactionEntries.length > 0 && (
-                          <div className={`absolute -bottom-2.5 flex items-center gap-0.5 bg-white border border-gray-200 rounded-full px-2 py-0.5 shadow-sm text-[10px] z-10 ${isMe ? "right-3" : "left-3"}`}>
-                            {Array.from(new Set(Object.values(reactionsObj))).map((emoji, idx) => (
-                              <button
-                                key={idx}
-                                type="button"
-                                onClick={() => handleReaction(msg.id, emoji, reactionsObj)}
-                                className="cursor-pointer hover:scale-125 transition-transform px-0.5"
-                                title={`Click to change/remove reaction`}
-                              >
-                                {emoji}
-                              </button>
+                        {orderedEmojis.length > 0 && (
+                          <div className={`absolute -bottom-2.5 flex items-center gap-0.5 bg-white border border-gray-200 rounded-full px-2 py-0.5 shadow-sm text-[10px] z-10 pointer-events-none ${isMe ? "right-3" : "left-3"}`}>
+                            {orderedEmojis.map((emoji, idx) => (
+                              <span key={idx} className="px-0.5">{emoji}</span>
                             ))}
-                            {reactionEntries.length > 1 && (
-                              <span className="text-[9px] font-bold text-gray-500 ml-0.5">{reactionEntries.length}</span>
+                            {Object.keys(reactionsObj).length > 2 && (
+                              <span className="text-[9px] font-bold text-gray-500 ml-0.5">{Object.keys(reactionsObj).length}</span>
                             )}
                           </div>
                         )}
@@ -608,6 +646,42 @@ export default function MessagesPage() {
                   );
                 })
               )}
+
+              {/* Transparent Full-Screen Backdrop to automatically close reaction menu on outside click */}
+              {reactionMenuState && (
+                <div 
+                  className="fixed inset-0 z-[190]"
+                  onClick={() => setReactionMenuState(null)}
+                />
+              )}
+
+              {/* Pinned Click/Touch Reaction Menu positioned exactly where clicked/held */}
+              {reactionMenuState && (
+                <div
+                  style={{
+                    position: "fixed",
+                    top: `${Math.max(20, reactionMenuState.y - 50)}px`,
+                    left: `${Math.max(20, Math.min(window.innerWidth - 240, reactionMenuState.x - 100))}px`,
+                  }}
+                  className="flex items-center gap-1 bg-white border border-gray-200 shadow-xl rounded-full px-3 py-1.5 z-[200] animate-in fade-in zoom-in-95 duration-150"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {REACTION_EMOJIS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => {
+                        const targetMsg = messages.find(m => m.id === reactionMenuState.msgId);
+                        handleReaction(reactionMenuState.msgId, emoji, targetMsg?.reactions);
+                      }}
+                      className="hover:scale-125 transition-transform text-base px-1.5 cursor-pointer"
+                      title={`React with ${emoji}`}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Stable Form & Emoji Popup Picker */}
@@ -621,6 +695,10 @@ export default function MessagesPage() {
                       onClick={() => {
                         setInputText((prev) => prev + emoji);
                         setShowEmojiPicker(false);
+                        if (textareaRef.current) {
+                          textareaRef.current.style.height = "auto";
+                          textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 72)}px`;
+                        }
                       }}
                       className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center transition cursor-pointer text-base"
                       title={`Insert ${emoji}`}
@@ -642,17 +720,23 @@ export default function MessagesPage() {
                     😊
                   </button>
                   <textarea
-                    rows={2}
+                    ref={textareaRef}
+                    rows={1}
                     placeholder={`Message @${selectedFriend}...`}
                     value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
+                    onChange={(e) => {
+                      setInputText(e.target.value);
+                      const el = e.target;
+                      el.style.height = "auto";
+                      el.style.height = `${Math.min(el.scrollHeight, 72)}px`;
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
                         handleSendMessage();
                       }
                     }}
-                    className="w-full pl-10 pr-3.5 py-2 text-xs bg-transparent focus:outline-none text-gray-900 font-medium placeholder:text-gray-400 min-w-0 resize-none max-h-20 overflow-y-auto leading-relaxed"
+                    className="w-full pl-10 pr-3.5 py-2 text-base md:text-xs bg-transparent focus:outline-none text-gray-900 font-medium placeholder:text-gray-400 min-w-0 resize-none max-h-[72px] overflow-y-auto leading-relaxed"
                   />
                 </div>
                 <button

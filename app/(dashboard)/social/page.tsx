@@ -9,6 +9,7 @@ interface Message {
   sender_username: string;
   content: string;
   created_at: string;
+  reactions?: Record<string, string>;
 }
 
 interface Room {
@@ -17,6 +18,8 @@ interface Room {
   type: string;
   fee_cents: number;
 }
+
+const REACTION_EMOJIS = ["❤️", "👍", "😂", "😮", "😢", "🔥"];
 
 export default function ChatHubPage() {
   const router = useRouter();
@@ -34,6 +37,14 @@ export default function ChatHubPage() {
   const [inputMessage, setInputMessage] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Click & Hold / Tap reaction menu state for public chat
+  const [reactionMenuState, setReactionMenuState] = useState<{
+    msgId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchMessages = useCallback(async (roomId: string) => {
     const { data, error } = await supabase
@@ -149,6 +160,13 @@ export default function ChatHubPage() {
       )
       .on(
         'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `room_id=eq.${currentRoom.id}` },
+        (payload) => {
+          setMessages((prev) => prev.map((m) => (m.id === payload.new.id ? (payload.new as Message) : m)));
+        }
+      )
+      .on(
+        'postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'messages' },
         (payload) => {
           setMessages((prev) => prev.filter((m) => m.id !== payload.old.id));
@@ -199,6 +217,54 @@ export default function ChatHubPage() {
       }
     } catch (err) {
       console.error("Failed to send message:", err);
+    }
+  };
+
+  const handleReaction = async (messageId: string, emoji: string, existingReactions?: Record<string, string>) => {
+    if (!currentUsername) return;
+    const reactions = { ...(existingReactions || {}) };
+
+    if (reactions[currentUsername] === emoji) {
+      delete reactions[currentUsername];
+    } else {
+      reactions[currentUsername] = emoji;
+    }
+
+    const { error } = await supabase
+      .from("messages")
+      .update({ reactions })
+      .eq("id", messageId);
+
+    if (error) {
+      console.error("Failed to update reaction:", error);
+    }
+    setReactionMenuState(null);
+  };
+
+  const handleBubbleClick = (msgId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setReactionMenuState({
+      msgId,
+      x: e.clientX,
+      y: e.clientY,
+    });
+  };
+
+  const handleTouchStart = (msgId: string, e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    longPressTimerRef.current = setTimeout(() => {
+      setReactionMenuState({
+        msgId,
+        x: touch.clientX,
+        y: touch.clientY,
+      });
+    }, 500);
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
     }
   };
 
@@ -275,12 +341,26 @@ export default function ChatHubPage() {
             )}
           </div>
 
-          <div className="flex-1 p-4 overflow-y-auto space-y-3 max-h-[60vh]">
+          <div 
+            onClick={() => reactionMenuState && setReactionMenuState(null)}
+            className="flex-1 p-4 overflow-y-auto space-y-4 max-h-[60vh] relative"
+          >
             {messages.length === 0 ? (
               <p className="text-center text-xs text-gray-400 py-10">No messages yet. Say hello to start the conversation!</p>
             ) : (
               messages.map((msg) => {
                 const isMe = msg.sender_username === username;
+                const reactionsObj = msg.reactions || {};
+
+                // Aggregate reaction counts (up to 6 distinct places)
+                const counts: Record<string, number> = {};
+                Object.values(reactionsObj).forEach((emoji) => {
+                  counts[emoji] = (counts[emoji] || 0) + 1;
+                });
+                const aggregatedPlaces = Object.entries(counts)
+                  .sort((a, b) => b[1] - a[1])
+                  .slice(0, 6);
+
                 return (
                   <div key={msg.id} className={`flex flex-col group ${isMe ? "items-end" : "items-start"}`}>
                     <div className="flex items-center space-x-2 px-1 mb-0.5">
@@ -296,13 +376,70 @@ export default function ChatHubPage() {
                         </button>
                       )}
                     </div>
-                    <div className={`p-3 rounded-2xl text-xs max-w-md ${isMe ? "bg-blue-600 text-white rounded-br-xs" : "bg-gray-100 text-gray-900 rounded-bl-xs"}`}>
-                      {msg.content}
+
+                    <div
+                      onClick={(e) => handleBubbleClick(msg.id, e)}
+                      onTouchStart={(e) => handleTouchStart(msg.id, e)}
+                      onTouchEnd={handleTouchEnd}
+                      className="relative w-fit max-w-md mb-2 cursor-pointer"
+                    >
+                      <div className={`p-3 rounded-2xl text-xs ${isMe ? "bg-blue-600 text-white rounded-br-xs" : "bg-gray-100 text-gray-900 rounded-bl-xs"}`}>
+                        {msg.content}
+                      </div>
+
+                      {/* Aggregated Reactions Display (Up to 6 places) */}
+                      {aggregatedPlaces.length > 0 && (
+                        <div className={`absolute -bottom-2.5 flex items-center gap-1 bg-white border border-gray-200 rounded-full px-2 py-0.5 shadow-sm text-[10px] z-10 pointer-events-none ${isMe ? "right-3" : "left-3"}`}>
+                          {aggregatedPlaces.map(([emoji, count], idx) => (
+                            <span key={idx} className="flex items-center gap-0.5 px-0.5 font-medium text-gray-800">
+                              <span>{emoji}</span>
+                              {count > 1 && <span className="text-[9px] text-gray-500">{count}</span>}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
               })
             )}
+
+            {/* Transparent Full-Screen Backdrop to close reaction menu on outside click */}
+            {reactionMenuState && (
+              <div 
+                className="fixed inset-0 z-[190]"
+                onClick={() => setReactionMenuState(null)}
+              />
+            )}
+
+            {/* Pinned Click/Touch Reaction Menu positioned exactly where clicked/held */}
+            {reactionMenuState && (
+              <div
+                style={{
+                  position: "fixed",
+                  top: `${Math.max(20, reactionMenuState.y - 50)}px`,
+                  left: `${Math.max(20, Math.min(window.innerWidth - 240, reactionMenuState.x - 100))}px`,
+                }}
+                className="flex items-center gap-1 bg-white border border-gray-200 shadow-xl rounded-full px-3 py-1.5 z-[200] animate-in fade-in zoom-in-95 duration-150"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {REACTION_EMOJIS.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    onClick={() => {
+                      const targetMsg = messages.find(m => m.id === reactionMenuState.msgId);
+                      handleReaction(reactionMenuState.msgId, emoji, targetMsg?.reactions);
+                    }}
+                    className="hover:scale-125 transition-transform text-base px-1.5 cursor-pointer"
+                    title={`React with ${emoji}`}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div ref={messagesEndRef} />
           </div>
 
@@ -314,7 +451,7 @@ export default function ChatHubPage() {
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
                   placeholder={`Type an encrypted message (${currentFeeFormatted} fee)...`}
-                  className="flex-1 border border-gray-300 bg-white rounded-lg px-3 py-2 text-xs text-black focus:outline-none focus:border-blue-600"
+                  className="flex-1 border border-gray-300 bg-white rounded-lg px-3 py-2 text-base md:text-xs text-black focus:outline-none focus:border-blue-600"
                 />
                 <button
                   type="submit"
@@ -328,7 +465,7 @@ export default function ChatHubPage() {
                 type="text"
                 disabled
                 placeholder="Messaging locked: Account pending administrator approval..."
-                className="flex-1 border border-gray-200 bg-gray-100 rounded-lg px-3 py-2 text-xs text-gray-400 cursor-not-allowed"
+                className="flex-1 border border-gray-200 bg-gray-100 rounded-lg px-3 py-2 text-base md:text-xs text-gray-400 cursor-not-allowed"
               />
             )}
           </form>

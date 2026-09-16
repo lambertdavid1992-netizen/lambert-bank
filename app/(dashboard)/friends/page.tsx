@@ -12,6 +12,14 @@ interface FriendRelation {
   profile?: any;
 }
 
+interface ConfirmModalState {
+  isOpen: boolean;
+  type: "reject" | "cancel" | "remove" | "delete_user" | null;
+  relationId: string | null;
+  targetName: string | null;
+  targetUserId?: string | null;
+}
+
 export default function FriendsPage() {
   const router = useRouter();
   const supabase = createBrowserClient(
@@ -28,7 +36,21 @@ export default function FriendsPage() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // Admin Signup Info Modal State
+  const [adminModalProfile, setAdminModalProfile] = useState<any | null>(null);
+
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
+    isOpen: false,
+    type: null,
+    relationId: null,
+    targetName: null,
+    targetUserId: null,
+  });
+
+  const isAdmin = currentUsername.toLowerCase() === "kingdavid";
 
   const calculateAge = (dobString: string) => {
     if (!dobString) return "N/A";
@@ -84,16 +106,16 @@ export default function FriendsPage() {
           acceptedList.push(enrichedRel);
         } else if (rel.status === "pending") {
           if (rel.receiver_username.toLowerCase() === myUsername.toLowerCase()) {
-            pendingIncomingList.push(enrichedRel);
+            pendingIncomingList.push(enrichedRel); // Incoming requests from others
           } else if (rel.sender_username.toLowerCase() === myUsername.toLowerCase()) {
-            pendingSentList.push(enrichedRel);
+            pendingSentList.push(enrichedRel); // Outgoing pending requests sent by current user
           }
         }
       }
 
       setFriends(acceptedList);
-      setFriendRequests(pendingIncomingList);
-      setSentRequests(pendingSentList);
+      setFriendRequests(pendingIncomingList); // REQUESTS tab (Incoming)
+      setSentRequests(pendingSentList);       // PENDING tab (Outgoing)
     }
     if (isInitial) setLoading(false);
   }, [router, supabase]);
@@ -159,11 +181,87 @@ export default function FriendsPage() {
     }
   };
 
-  const handleAcceptRequest = async (relationId: string) => {
-    if (!isApproved) {
-      alert("Account pending approval.");
-      return;
+  const executeConfirmedAction = async () => {
+    if (!confirmModal.relationId || !confirmModal.type) return;
+    const relationId = confirmModal.relationId;
+    const actionType = confirmModal.type;
+
+    setConfirmModal({ isOpen: false, type: null, relationId: null, targetName: null, targetUserId: null });
+    setActionLoadingId(relationId);
+
+    const { error } = await supabase
+      .from("friendships")
+      .delete()
+      .eq("id", relationId);
+
+    if (error) {
+      alert(`Failed to ${actionType} request: ` + error.message);
+      setActionLoadingId(null);
+    } else {
+      loadData(false);
+      triggerRefresh();
+      setActionLoadingId(null);
     }
+  };
+
+  const executeDeleteUserFull = async () => {
+    if (!confirmModal.targetUserId || confirmModal.type !== "delete_user") return;
+    const userIdToDelete = confirmModal.targetUserId;
+
+    setConfirmModal({ isOpen: false, type: null, relationId: null, targetName: null, targetUserId: null });
+
+    try {
+      const { data: targetProfile } = await supabase
+        .from("profiles")
+        .select("username, photo_url")
+        .eq("user_id", userIdToDelete)
+        .single();
+
+      if (targetProfile) {
+        const uName = targetProfile.username;
+
+        if (targetProfile.photo_url) {
+          try {
+            const pathParts = targetProfile.photo_url.split('/profile-photos/');
+            if (pathParts.length > 1) {
+              await supabase.storage.from('profile-photos').remove([pathParts[1]]);
+            }
+          } catch (storageErr) {
+            console.error("Storage removal error:", storageErr);
+          }
+        }
+
+        await supabase.from("friendships").delete().or(`sender_username.eq.${uName},receiver_username.eq.${uName}`);
+
+        const { data: userPosts } = await supabase.from("posts").select("id").eq("username", uName);
+        if (userPosts && userPosts.length > 0) {
+          const pIds = userPosts.map(p => p.id);
+          await supabase.from("post_likes").delete().in("post_id", pIds);
+          await supabase.from("post_comments").delete().in("post_id", pIds);
+          await supabase.from("posts").delete().eq("username", uName);
+        }
+        await supabase.from("post_likes").delete().eq("username", uName);
+        await supabase.from("post_comments").delete().eq("username", uName);
+        await supabase.from("posts").delete().ilike("profile_username", uName);
+
+        await supabase.from("profiles").delete().eq("user_id", userIdToDelete);
+      }
+
+      await supabase.rpc("admin_delete_user", { target_user_id: userIdToDelete });
+
+      loadData(false);
+      triggerRefresh();
+    } catch (err: any) {
+      alert("Failed to delete user entirely: " + (err.message || err));
+    }
+  };
+
+  const executeModalAcceptFromReject = async () => {
+    if (!confirmModal.relationId) return;
+    const relationId = confirmModal.relationId;
+
+    setConfirmModal({ isOpen: false, type: null, relationId: null, targetName: null, targetUserId: null });
+    setActionLoadingId(relationId);
 
     const { error } = await supabase
       .from("friendships")
@@ -172,44 +270,38 @@ export default function FriendsPage() {
 
     if (error) {
       alert("Failed to accept request: " + error.message);
+      setActionLoadingId(null);
     } else {
-      alert("Friend request accepted!");
       loadData(false);
       triggerRefresh();
+      setActionLoadingId(null);
     }
   };
 
-  const handleDeleteFriend = async (relationId: string, friendName: string) => {
-    if (!confirm(`Are you sure you want to remove @${friendName} from your friends list?`)) return;
+  const handleAcceptRequest = async (relationId: string) => {
+    if (actionLoadingId) return;
+    if (!isApproved) {
+      alert("Account pending approval.");
+      return;
+    }
 
+    setActionLoadingId(relationId);
     const { error } = await supabase
       .from("friendships")
-      .delete()
+      .update({ status: "accepted" })
       .eq("id", relationId);
 
     if (error) {
-      alert("Failed to remove friend: " + error.message);
+      alert("Failed to accept request: " + error.message);
+      setActionLoadingId(null);
     } else {
       loadData(false);
       triggerRefresh();
+      setActionLoadingId(null);
     }
   };
 
-  const handleCancelRequest = async (relationId: string, targetName: string) => {
-    if (!confirm(`Are you sure you want to cancel your friend request to @${targetName}?`)) return;
-
-    const { error } = await supabase
-      .from("friendships")
-      .delete()
-      .eq("id", relationId);
-
-    if (error) {
-      alert("Failed to cancel request: " + error.message);
-    } else {
-      loadData(false);
-      triggerRefresh();
-    }
-  };
+  const isFemaleModal = adminModalProfile?.gender?.toLowerCase() === "female";
 
   return (
     <div className="space-y-6">
@@ -254,7 +346,7 @@ export default function FriendsPage() {
                       </div>
                       <button
                         onClick={() => handleSendRequest(u.username)}
-                        className="px-2.5 py-1 bg-blue-600 text-white rounded text-[10px] font-bold uppercase cursor-pointer hover:bg-blue-700 transition"
+                        className="px-2.5 py-1 bg-emerald-600 text-white rounded text-[10px] font-bold uppercase cursor-pointer hover:bg-emerald-700 transition shadow-xs"
                       >
                         Add
                       </button>
@@ -287,26 +379,30 @@ export default function FriendsPage() {
             <span>Friends</span>
             <span className="bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded-full text-[10px]">{friends.length}</span>
           </button>
+          
+          {/* REQUESTS Tab: Users trying to add current user */}
           <button
             onClick={() => setActiveTab("REQUESTS")}
             className={`pb-3 text-xs font-bold uppercase tracking-wider border-b-2 transition cursor-pointer flex items-center gap-2 shrink-0 ${
               activeTab === "REQUESTS" ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-800"
             }`}
           >
-            <span>Pending Your Approval</span>
+            <span>REQUESTS</span>
             {friendRequests.length > 0 && (
               <span className="w-5 h-5 bg-rose-600 text-white rounded-full text-[10px] font-bold flex items-center justify-center shadow-xs">
                 {friendRequests.length}
               </span>
             )}
           </button>
+
+          {/* PENDING Tab: Users current profile tried to add */}
           <button
             onClick={() => setActiveTab("SENT")}
             className={`pb-3 text-xs font-bold uppercase tracking-wider border-b-2 transition cursor-pointer flex items-center gap-2 shrink-0 ${
               activeTab === "SENT" ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-800"
             }`}
           >
-            <span>Your Requests</span>
+            <span>PENDING</span>
             {sentRequests.length > 0 && (
               <span className="w-5 h-5 bg-blue-600 text-white rounded-full text-[10px] font-bold flex items-center justify-center shadow-xs">
                 {sentRequests.length}
@@ -330,11 +426,21 @@ export default function FriendsPage() {
                 const friendUsername = item.sender_username.toLowerCase() === currentUsername.toLowerCase() 
                   ? item.receiver_username 
                   : item.sender_username;
+                const isProcessing = actionLoadingId === item.id;
+                const isFemaleFriend = friendProf?.gender?.toLowerCase() === "female";
 
                 return (
                   <div key={item.id} className="bg-gray-50 border border-gray-200 p-4 rounded-xl flex items-center justify-between shadow-xs">
                     <div className="flex items-center gap-3">
-                      <div className="w-14 h-14 rounded-lg bg-gray-200 overflow-hidden flex-shrink-0 border border-gray-300">
+                      <div 
+                        onClick={() => {
+                          if (isAdmin) setAdminModalProfile(friendProf);
+                        }}
+                        className={`w-14 h-14 rounded-lg bg-gray-200 overflow-hidden flex-shrink-0 border border-gray-300 ${
+                          isAdmin ? "cursor-pointer hover:opacity-80 transition" : ""
+                        }`}
+                        title={isAdmin ? "View complete signup info" : ""}
+                      >
                         {friendProf?.photo_url ? (
                           <img src={friendProf.photo_url} alt="" className="w-full h-full object-cover" />
                         ) : (
@@ -345,24 +451,31 @@ export default function FriendsPage() {
                         <div className="flex items-center gap-2">
                           <h3 
                             onClick={() => router.push(`/user/${friendUsername}`)}
-                            className="text-xs font-black text-blue-600 hover:underline uppercase cursor-pointer"
+                            className={`text-xs font-black uppercase cursor-pointer hover:underline inline-block px-2 py-0.5 rounded shadow-2xs ${
+                              isFemaleFriend ? "bg-pink-200 text-gray-900" : "bg-blue-200 text-gray-900"
+                            }`}
                           >
                             {friendProf?.first_name} {friendProf?.last_name}
                           </h3>
-                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase rounded-full">
-                            Friend
-                          </span>
                         </div>
-                        <p className="text-[10px] font-mono text-gray-600 font-bold">@{friendUsername}</p>
+                        <p className="text-[10px] font-mono text-gray-600 font-bold mt-1">@{friendUsername}</p>
                         <p className="text-[10px] text-gray-500 mt-0.5">Age: {calculateAge(friendProf?.dob)}</p>
                       </div>
                     </div>
-                    <button
-                      onClick={() => handleDeleteFriend(item.id, friendUsername)}
-                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-xs"
-                    >
-                      Remove
-                    </button>
+
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase rounded-full">
+                        Friend
+                      </span>
+                      <button
+                        disabled={isProcessing}
+                        onClick={() => handleRemoveMember(item.id, friendUsername)}
+                        className="px-2.5 py-0.5 bg-[#800000] hover:bg-[#660000] text-white rounded text-[9px] font-black uppercase tracking-wider transition cursor-pointer shadow-xs disabled:opacity-50"
+                        title="Remove from friends"
+                      >
+                        {isProcessing ? "..." : "Remove"}
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -371,16 +484,27 @@ export default function FriendsPage() {
         ) : activeTab === "REQUESTS" ? (
           friendRequests.length === 0 ? (
             <div className="bg-gray-50 p-10 rounded-xl text-center space-y-2 border border-gray-200">
-              <p className="text-xs font-bold text-gray-500 uppercase">No incoming friend requests.</p>
+              <p className="text-xs font-bold text-gray-500 uppercase">No incoming requests.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {friendRequests.map((req) => {
                 const reqProf = req.profile;
+                const isProcessing = actionLoadingId === req.id;
+                const isFemaleReq = reqProf?.gender?.toLowerCase() === "female";
+
                 return (
                   <div key={req.id} className="bg-gray-50 border border-gray-200 p-4 rounded-xl flex items-center justify-between shadow-xs">
                     <div className="flex items-center gap-3">
-                      <div className="w-14 h-14 rounded-lg bg-gray-200 overflow-hidden flex-shrink-0 border border-gray-300">
+                      <div 
+                        onClick={() => {
+                          if (isAdmin) setAdminModalProfile(reqProf);
+                        }}
+                        className={`w-14 h-14 rounded-lg bg-gray-200 overflow-hidden flex-shrink-0 border border-gray-300 ${
+                          isAdmin ? "cursor-pointer hover:opacity-80 transition" : ""
+                        }`}
+                        title={isAdmin ? "View complete signup info" : ""}
+                      >
                         {reqProf?.photo_url ? (
                           <img src={reqProf.photo_url} alt="" className="w-full h-full object-cover" />
                         ) : (
@@ -391,40 +515,54 @@ export default function FriendsPage() {
                         <div className="flex items-center gap-2">
                           <h3 
                             onClick={() => router.push(`/user/${req.sender_username}`)}
-                            className="text-xs font-black text-blue-600 hover:underline uppercase cursor-pointer"
+                            className={`text-xs font-black uppercase cursor-pointer hover:underline inline-block px-2 py-0.5 rounded shadow-2xs ${
+                              isFemaleReq ? "bg-pink-200 text-gray-900" : "bg-blue-200 text-gray-900"
+                            }`}
                           >
                             {reqProf?.first_name} {reqProf?.last_name}
                           </h3>
-                          <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[9px] font-black uppercase rounded-full">
-                            Pending
-                          </span>
                         </div>
-                        <p className="text-[10px] font-mono text-gray-600 font-bold">@{req.sender_username}</p>
+                        <p className="text-[10px] font-mono text-gray-600 font-bold mt-1">@{req.sender_username}</p>
                         <p className="text-[10px] text-gray-500 mt-0.5">Age: {calculateAge(reqProf?.dob)}</p>
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                      {isApproved ? (
+
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[9px] font-black uppercase rounded-full">
+                        Pending
+                      </span>
+                      <div className="flex gap-1">
+                        {isApproved ? (
+                          <button
+                            disabled={isProcessing}
+                            onClick={() => handleAcceptRequest(req.id)}
+                            className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold transition cursor-pointer shadow-xs disabled:opacity-50"
+                            title="Accept request"
+                          >
+                            ✓
+                          </button>
+                        ) : (
+                          <button
+                            disabled
+                            className="px-2 py-0.5 bg-gray-300 text-gray-500 rounded text-xs font-bold cursor-not-allowed"
+                          >
+                            ✓
+                          </button>
+                        )}
                         <button
-                          onClick={() => handleAcceptRequest(req.id)}
-                          className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-xs"
+                          disabled={isProcessing}
+                          onClick={() => setConfirmModal({
+                            isOpen: true,
+                            type: "reject",
+                            relationId: req.id,
+                            targetName: req.sender_username,
+                          })}
+                          className="px-2 py-0.5 bg-[#800000] hover:bg-[#660000] text-white rounded text-xs font-bold transition cursor-pointer shadow-xs disabled:opacity-50"
+                          title="Reject request"
                         >
-                          Accept
+                          ✕
                         </button>
-                      ) : (
-                        <button
-                          disabled
-                          className="px-3 py-2 bg-gray-300 text-gray-500 rounded-lg text-xs font-bold uppercase tracking-wider cursor-not-allowed"
-                        >
-                          Accept
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleDeleteFriend(req.id, req.sender_username)}
-                        className="px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-xs"
-                      >
-                        Reject
-                      </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -434,16 +572,27 @@ export default function FriendsPage() {
         ) : (
           sentRequests.length === 0 ? (
             <div className="bg-gray-50 p-10 rounded-xl text-center space-y-2 border border-gray-200">
-              <p className="text-xs font-bold text-gray-500 uppercase">No outgoing pending requests.</p>
+              <p className="text-xs font-bold text-gray-500 uppercase">No outgoing requests.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {sentRequests.map((req) => {
                 const reqProf = req.profile;
+                const isProcessing = actionLoadingId === req.id;
+                const isFemaleSent = reqProf?.gender?.toLowerCase() === "female";
+
                 return (
                   <div key={req.id} className="bg-gray-50 border border-gray-200 p-4 rounded-xl flex items-center justify-between shadow-xs">
                     <div className="flex items-center gap-3">
-                      <div className="w-14 h-14 rounded-lg bg-gray-200 overflow-hidden flex-shrink-0 border border-gray-300">
+                      <div 
+                        onClick={() => {
+                          if (isAdmin) setAdminModalProfile(reqProf);
+                        }}
+                        className={`w-14 h-14 rounded-lg bg-gray-200 overflow-hidden flex-shrink-0 border border-gray-300 ${
+                          isAdmin ? "cursor-pointer hover:opacity-80 transition" : ""
+                        }`}
+                        title={isAdmin ? "View complete signup info" : ""}
+                      >
                         {reqProf?.photo_url ? (
                           <img src={reqProf.photo_url} alt="" className="w-full h-full object-cover" />
                         ) : (
@@ -454,24 +603,36 @@ export default function FriendsPage() {
                         <div className="flex items-center gap-2">
                           <h3 
                             onClick={() => router.push(`/user/${req.receiver_username}`)}
-                            className="text-xs font-black text-blue-600 hover:underline uppercase cursor-pointer"
+                            className={`text-xs font-black uppercase cursor-pointer hover:underline inline-block px-2 py-0.5 rounded shadow-2xs ${
+                              isFemaleSent ? "bg-pink-200 text-gray-900" : "bg-blue-200 text-gray-900"
+                            }`}
                           >
                             {reqProf?.first_name} {reqProf?.last_name}
                           </h3>
-                          <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-black uppercase rounded-full">
-                            Requested
-                          </span>
                         </div>
-                        <p className="text-[10px] font-mono text-gray-600 font-bold">@{req.receiver_username}</p>
+                        <p className="text-[10px] font-mono text-gray-600 font-bold mt-1">@{req.receiver_username}</p>
                         <p className="text-[10px] text-gray-500 mt-0.5">Age: {calculateAge(reqProf?.dob)}</p>
                       </div>
                     </div>
-                    <button
-                      onClick={() => handleCancelRequest(req.id, req.receiver_username)}
-                      className="px-3 py-2 bg-gray-200 hover:bg-rose-600 hover:text-white text-gray-700 rounded-lg text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-xs"
-                    >
-                      Cancel Request
-                    </button>
+
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-black uppercase rounded-full">
+                        Requested
+                      </span>
+                      <button
+                        disabled={isProcessing}
+                        onClick={() => setConfirmModal({
+                          isOpen: true,
+                          type: "cancel",
+                          relationId: req.id,
+                          targetName: req.receiver_username,
+                        })}
+                        className="px-2.5 py-0.5 bg-gray-200 hover:bg-[#800000] hover:text-white text-gray-700 rounded text-[9px] font-black uppercase tracking-wider transition cursor-pointer shadow-xs disabled:opacity-50"
+                        title="Cancel sent friend request"
+                      >
+                        {isProcessing ? "..." : "Cancel"}
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -479,6 +640,158 @@ export default function FriendsPage() {
           )
         )}
       </div>
+
+      {/* ADMIN SIGNUP INFO MODAL */}
+      {adminModalProfile && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-lg overflow-hidden transition-all text-left">
+            <div className={`p-4 flex justify-between items-center font-bold ${
+              isFemaleModal ? "bg-pink-200 text-gray-900" : "bg-blue-200 text-gray-900"
+            }`}>
+              <h3 className="text-base font-bold">
+                Signup Info: {adminModalProfile.first_name} {adminModalProfile.last_name}
+              </h3>
+              <button
+                onClick={() => setAdminModalProfile(null)}
+                className="text-gray-700 hover:text-black text-lg leading-none cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className={`h-1 ${isFemaleModal ? "bg-pink-300" : "bg-blue-300"}`} />
+
+            <div className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+              <div className="flex items-center gap-4 pb-4 border-b border-gray-100">
+                <div className="w-20 h-24 rounded-lg bg-gray-100 border border-gray-300 overflow-hidden shrink-0 flex items-center justify-center">
+                  {adminModalProfile.photo_url ? (
+                    <img src={adminModalProfile.photo_url} alt="Profile" className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-[10px] text-gray-400">No Photo</span>
+                  )}
+                </div>
+                <div className="space-y-1 text-xs">
+                  <p><span className="font-bold text-gray-400 uppercase text-[10px]">Full Name:</span> {adminModalProfile.first_name} {adminModalProfile.last_name}</p>
+                  <p><span className="font-bold text-gray-400 uppercase text-[10px]">Username:</span> @{adminModalProfile.username}</p>
+                  <p><span className="font-bold text-gray-400 uppercase text-[10px]">Email:</span> {adminModalProfile.email}</p>
+                  <p><span className="font-bold text-gray-400 uppercase text-[10px]">Mobile Phone:</span> {adminModalProfile.mobile_phone || "N/A"}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 text-xs text-gray-700">
+                <div><span className="font-bold text-gray-400 uppercase text-[10px] block">Date of Birth:</span> {adminModalProfile.dob} ({calculateAge(adminModalProfile.dob)})</div>
+                <div><span className="font-bold text-gray-400 uppercase text-[10px] block">Gender:</span> {adminModalProfile.gender || "N/A"}</div>
+                <div><span className="font-bold text-gray-400 uppercase text-[10px] block">Religion:</span> {adminModalProfile.religion || "N/A"}</div>
+                <div><span className="font-bold text-gray-400 uppercase text-[10px] block">Employment:</span> {adminModalProfile.employment_status || "N/A"}</div>
+                <div><span className="font-bold text-gray-400 uppercase text-[10px] block">Approval Status:</span> {adminModalProfile.is_approved ? "Approved" : "Pending Review"}</div>
+              </div>
+
+              <div className="text-xs text-gray-700 pt-2 border-t border-gray-100">
+                <span className="font-bold text-gray-400 uppercase text-[10px] block">Residential Address:</span>
+                <span className="font-medium text-gray-900">{adminModalProfile.address}</span>
+              </div>
+
+              <div className="flex justify-between items-center pt-3 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const profToDel = adminModalProfile;
+                    setAdminModalProfile(null);
+                    setConfirmModal({
+                      isOpen: true,
+                      type: "delete_user",
+                      relationId: null,
+                      targetName: profToDel.username,
+                      targetUserId: profToDel.user_id,
+                    });
+                  }}
+                  className="px-4 py-2 rounded text-xs font-bold bg-[#800000] hover:bg-[#660000] text-white shadow transition cursor-pointer"
+                >
+                  DELETE USER
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAdminModalProfile(null)}
+                  className={`px-6 py-2 rounded text-xs font-bold shadow transition cursor-pointer ${
+                    isFemaleModal ? "bg-pink-200 hover:bg-pink-300 text-gray-900" : "bg-blue-200 hover:bg-blue-300 text-gray-900"
+                  }`}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM CONFIRMATION MODAL */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all text-left">
+            <div className="bg-[#800000] text-white p-4 flex justify-between items-center font-bold">
+              <h3 className="text-base font-bold text-white">
+                {confirmModal.type === "reject" ? "Reject Friend Request" : confirmModal.type === "remove" ? "Remove Friend" : confirmModal.type === "cancel" ? "Cancel Friend Request" : "Delete User Entirely"}
+              </h3>
+              <button
+                onClick={() => setConfirmModal({ isOpen: false, type: null, relationId: null, targetName: null })}
+                className="text-red-100 hover:text-white text-lg leading-none cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="h-1 bg-[#660000]" />
+
+            <div className="p-5 space-y-4">
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3.5 text-xs text-red-900 leading-relaxed">
+                {confirmModal.type === "reject" ? (
+                  <>Are you sure you want to reject @<strong>{confirmModal.targetName}</strong>&apos;s friend request?</>
+                ) : confirmModal.type === "remove" ? (
+                  <>Are you sure you want to remove @<strong>{confirmModal.targetName}</strong> from your friends list?</>
+                ) : (
+                  <>Are you sure you want to cancel your friend request to @<strong>{confirmModal.targetName}</strong>?</>
+                )}
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                {confirmModal.type === "reject" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={executeModalAcceptFromReject}
+                      className="w-1/2 py-2.5 rounded text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow transition cursor-pointer"
+                    >
+                      Accept
+                    </button>
+                    <button
+                      type="button"
+                      onClick={executeConfirmedAction}
+                      className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#800000] hover:bg-[#660000] text-white shadow transition cursor-pointer"
+                    >
+                      Reject
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmModal({ isOpen: false, type: null, relationId: null, targetName: null })}
+                      className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      onClick={executeConfirmedAction}
+                      className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#800000] hover:bg-[#660000] text-white shadow transition cursor-pointer"
+                    >
+                      Confirm
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

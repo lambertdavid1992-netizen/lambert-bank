@@ -151,6 +151,7 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
 
       const clientSeconds = Math.floor(accumulatedMs / 1000);
 
+      // Secure claim call passing validated client seconds to eliminate UI desync gaps
       const { data: newBalance, error } = await supabase.rpc("claim_pending_balance", {
         p_user_id: session.user.id,
         p_username: usernameRef.current,
@@ -172,7 +173,10 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
           if (profile.accumulated_session_seconds !== null && profile.accumulated_session_seconds !== undefined) {
             const profileSeconds = Number(profile.accumulated_session_seconds);
             const clampedSeconds = Math.min(profileSeconds, MAX_ALLOWED_SECONDS);
-            baseMsRef.current = clampedSeconds * 1000;
+            const serverMs = clampedSeconds * 1000;
+            const currentLocalMs = baseMsRef.current + (Date.now() - localAnchorTimeRef.current);
+            
+            baseMsRef.current = Math.max(serverMs, currentLocalMs);
             localAnchorTimeRef.current = Date.now();
             setAccumulatedMs(baseMsRef.current);
           }
@@ -190,7 +194,7 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
     }
   }, [supabase, accumulatedMs]);
 
-  // Non-expiring heartbeat: syncs time with server and updates the absolute anchor baseline
+  // Non-expiring heartbeat: syncs time with server and prevents backwards regression
   const sendHeartbeat = useCallback(async () => {
     if (!usernameRef.current || !sessionTokenRef.current || !isApprovedRef.current) return;
     try {
@@ -202,7 +206,11 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
       const numericSeconds = Number(serverSeconds);
       if (!error && !isNaN(numericSeconds) && numericSeconds >= 0 && isSessionActiveRef.current) {
         const clampedSeconds = Math.min(numericSeconds, MAX_ALLOWED_SECONDS);
-        baseMsRef.current = clampedSeconds * 1000;
+        const serverMs = clampedSeconds * 1000;
+        const currentLocalMs = baseMsRef.current + (Date.now() - localAnchorTimeRef.current);
+
+        // Protect against regression if server heartbeat returns capped/lagged time
+        baseMsRef.current = Math.max(serverMs, currentLocalMs);
         localAnchorTimeRef.current = Date.now();
         setAccumulatedMs(baseMsRef.current);
       }
@@ -304,8 +312,10 @@ export default function SessionTimerProvider({ children }: { children: React.Rea
       const dbSeconds = Number(profileRes.data?.accumulated_session_seconds ?? 0);
       const rpcSeconds = Number(startRes.data ?? 0);
       const resolvedSeconds = Math.min(Math.max(isNaN(dbSeconds) ? 0 : dbSeconds, isNaN(rpcSeconds) ? 0 : rpcSeconds), MAX_ALLOWED_SECONDS);
+      const resolvedMs = resolvedSeconds * 1000;
 
-      baseMsRef.current = resolvedSeconds * 1000;
+      const currentLocalMs = baseMsRef.current + (Date.now() - localAnchorTimeRef.current);
+      baseMsRef.current = Math.max(resolvedMs, currentLocalMs);
       localAnchorTimeRef.current = Date.now();
       setAccumulatedMs(baseMsRef.current);
 
