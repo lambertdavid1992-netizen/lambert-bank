@@ -181,6 +181,16 @@ export default function FriendsPage() {
     }
   };
 
+  // Newly declared function to resolve TypeScript compilation error TS2304
+  const handleRemoveMember = (relationId: string, targetName: string) => {
+    setConfirmModal({
+      isOpen: true,
+      type: "remove",
+      relationId: relationId,
+      targetName: targetName,
+    });
+  };
+
   const executeConfirmedAction = async () => {
     if (!confirmModal.relationId || !confirmModal.type) return;
     const relationId = confirmModal.relationId;
@@ -380,7 +390,6 @@ export default function FriendsPage() {
             <span className="bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded-full text-[10px]">{friends.length}</span>
           </button>
           
-          {/* REQUESTS Tab: Users trying to add current user */}
           <button
             onClick={() => setActiveTab("REQUESTS")}
             className={`pb-3 text-xs font-bold uppercase tracking-wider border-b-2 transition cursor-pointer flex items-center gap-2 shrink-0 ${
@@ -395,7 +404,6 @@ export default function FriendsPage() {
             )}
           </button>
 
-          {/* PENDING Tab: Users current profile tried to add */}
           <button
             onClick={() => setActiveTab("SENT")}
             className={`pb-3 text-xs font-bold uppercase tracking-wider border-b-2 transition cursor-pointer flex items-center gap-2 shrink-0 ${

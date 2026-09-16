@@ -416,6 +416,46 @@ function UserPublicProfileContent() {
     setActionLoading(false);
   };
 
+  // Newly declared function to resolve TypeScript compilation error TS2304
+  const executeModalAcceptFromReject = async () => {
+    if (!friendship?.id) return;
+    
+    setConfirmModal({ isOpen: false, type: null, relationId: null, targetName: null, targetUserId: null });
+    setActionLoading(true);
+
+    const { error } = await supabase
+      .from("friendships")
+      .update({ status: "accepted" })
+      .eq("id", friendship.id);
+
+    if (error) {
+      alert("Failed to accept request: " + error.message);
+    } else {
+      await loadData();
+    }
+    setActionLoading(false);
+  };
+
+  // Newly declared function to resolve TypeScript compilation error TS2304
+  const executeConfirmedAction = async () => {
+    if (!friendship?.id) return;
+
+    setConfirmModal({ isOpen: false, type: null, relationId: null, targetName: null, targetUserId: null });
+    setActionLoading(true);
+
+    const { error } = await supabase
+      .from("friendships")
+      .delete()
+      .eq("id", friendship.id);
+
+    if (error) {
+      alert("Failed to process request action: " + error.message);
+    } else {
+      await loadData();
+    }
+    setActionLoading(false);
+  };
+
   const executeDeleteUserFull = async () => {
     if (!confirmModal.targetUserId || confirmModal.type !== "delete_user") return;
     const userIdToDelete = confirmModal.targetUserId;
