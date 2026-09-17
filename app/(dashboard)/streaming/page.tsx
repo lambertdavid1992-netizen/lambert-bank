@@ -138,7 +138,6 @@ export default function StreamingPage() {
           if (signal.target !== currentUsername) return;
 
           if (isHost) {
-            // HOST handling incoming viewer offer
             if (signal.type === "offer") {
               const viewerUsername = signal.sender;
               const pc = new RTCPeerConnection(iceServers);
@@ -184,7 +183,6 @@ export default function StreamingPage() {
               }
             }
           } else {
-            // VIEWER handling incoming host answer
             const pc = peerConnectionsRef.current.get(selectedStreamer);
             if (!pc) return;
 
@@ -202,14 +200,18 @@ export default function StreamingPage() {
       )
       .subscribe();
 
-    // If Viewer, initiate connection to Host
     if (!isHost) {
       const pc = new RTCPeerConnection(iceServers);
       peerConnectionsRef.current.set(selectedStreamer, pc);
 
-      pc.ontrack = (event) => {
+      pc.ontrack = async (event) => {
         if (videoRef.current) {
           videoRef.current.srcObject = event.streams[0];
+          try {
+            await videoRef.current.play();
+          } catch (err) {
+            console.error("Viewer video play error:", err);
+          }
         }
       };
 
@@ -283,7 +285,6 @@ export default function StreamingPage() {
         enterFullScreen();
         await closeUserActiveStreams(currentUsername);
 
-        // Wipe old chat & signals
         await supabase.from("stream_messages").delete().neq("id", "00000000-0000-0000-0000-000000000000");
         await supabase.from("stream_signals").delete().eq("room_username", currentUsername);
         setMessages([]);
@@ -294,12 +295,21 @@ export default function StreamingPage() {
         });
 
         localStreamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.muted = true; // Host mutes local playback to prevent audio echo
-        }
         setIsStreaming(true);
         setSelectedStreamer(currentUsername);
+
+        // Allow React a micro-tick to mount the video ref if transitioning from lobby
+        setTimeout(async () => {
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            videoRef.current.muted = true;
+            try {
+              await videoRef.current.play();
+            } catch (err) {
+              console.error("Host video play error:", err);
+            }
+          }
+        }, 100);
 
         const { data, error } = await supabase
           .from("streams")
@@ -367,6 +377,14 @@ export default function StreamingPage() {
     exitFullScreen();
     setSelectedStreamer(null);
   };
+
+  // Bind local stream if component mounts while already streaming
+  useEffect(() => {
+    if (isStreaming && selectedStreamer === currentUsername && videoRef.current && localStreamRef.current) {
+      videoRef.current.srcObject = localStreamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [selectedStreamer, isStreaming, currentUsername]);
 
   // Cleanup on unmount
   useEffect(() => {
