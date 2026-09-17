@@ -27,7 +27,7 @@ export default function StreamingPage() {
   const router = useRouter();
   const supabase = createBrowserClient(
     "https://bucijzexpxsuxvsnwwyu.supabase.co",
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1Y2lqemV4cHhzdXh2c253d3l1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5MzM2NjAsImV4cCI6MjEwNDUwOTY2MH0.Gr34yXf6UDlZq54nEKZAvaUCnfXla26LoVSH3YY5u1M"
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string
   );
 
   const [currentUsername, setCurrentUsername] = useState<string>("Guest");
@@ -49,7 +49,7 @@ export default function StreamingPage() {
 
   const [chatInput, setChatInput] = useState<string>("");
   const [messages, setMessages] = useState<StreamChatMessage[]>([]);
-  
+
   const chatEndRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -132,23 +132,53 @@ export default function StreamingPage() {
     };
   }, [supabase, fetchActiveStreams]);
 
-  // WebRTC P2P Signaling with Robust ICE Buffering & Race-Condition Fixes
+  // WebRTC P2P Signaling with TURN relay + ICE buffering + auto-reconnect
   useEffect(() => {
     if (!selectedStreamer || !currentUsername || currentUsername === "Guest") return;
 
     const isHost = selectedStreamer === currentUsername && isStreaming;
-    const iceServers = {
+
+    // ------------------------------------------------------------------
+    // ICE configuration.
+    // TURN is REQUIRED for cross-network viewing (mobile data, school/office
+    // wifi, symmetric NAT). STUN alone only connects when a direct path exists,
+    // which is why some viewers worked and others got stuck "Reconnecting...".
+    // The openrelay entries below are a PUBLIC DEMO — fine for testing, but
+    // rate-limited and not reliable for production. Replace them with your own
+    // free credentials from https://www.metered.ca/tools/openrelay/ (50GB/mo
+    // free) or Cloudflare Calls TURN.
+    // ------------------------------------------------------------------
+    const iceServers: RTCConfiguration = {
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" }
-        // Add your free TURN server here when needed:
-        // { urls: "turn:your-turn-server.com", username: "...", credential: "..." }
-      ]
+        { urls: "stun:stun1.l.google.com:19302" },
+        {
+          urls: "turn:openrelay.metered.ca:80",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+        {
+          urls: "turn:openrelay.metered.ca:443",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+        {
+          urls: "turn:openrelay.metered.ca:443?transport=tcp",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+      ],
+      iceCandidatePoolSize: 10,
     };
 
     const roomChannel = supabase.channel(`room-broadcast-${selectedStreamer}`, {
       config: { broadcast: { self: false } }
     });
+
+    let isCleanedUp = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 6;
 
     const addBufferedCandidates = async (pc: RTCPeerConnection, peerKey: string) => {
       const candidates = pendingCandidatesRef.current.get(peerKey);
@@ -157,11 +187,94 @@ export default function StreamingPage() {
           try {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
           } catch (e) {
-            console.error("Buffered ICE error:", e);
+            console.error("[v0] Buffered ICE error:", e);
           }
         }
         pendingCandidatesRef.current.set(peerKey, []);
       }
+    };
+
+    // Build (or rebuild) the viewer's peer connection and send an offer.
+    // Reused for the initial connect AND for automatic reconnection.
+    const setupViewerConnection = async () => {
+      if (isCleanedUp || isHost) return;
+
+      // Tear down any previous connection for this streamer first.
+      const oldPc = peerConnectionsRef.current.get(selectedStreamer);
+      if (oldPc) {
+        oldPc.close();
+        peerConnectionsRef.current.delete(selectedStreamer);
+      }
+      pendingCandidatesRef.current.set(selectedStreamer, []);
+
+      const pc = new RTCPeerConnection(iceServers);
+      peerConnectionsRef.current.set(selectedStreamer, pc);
+
+      // Ensure we actually get media even before tracks are added.
+      pc.addTransceiver("video", { direction: "recvonly" });
+      pc.addTransceiver("audio", { direction: "recvonly" });
+
+      pc.onconnectionstatechange = () => {
+        if (isCleanedUp) return;
+        console.log("[v0] Viewer connection state:", pc.connectionState);
+        if (pc.connectionState === "connected") {
+          reconnectAttempts = 0;
+          setConnectionStatus("Live");
+        } else if (pc.connectionState === "disconnected") {
+          setConnectionStatus("Connection unstable...");
+        } else if (pc.connectionState === "failed") {
+          scheduleReconnect();
+        }
+      };
+
+      pc.ontrack = (event) => {
+        console.log("[v0] Viewer received remote track!", event.streams[0]);
+        if (videoRef.current) {
+          videoRef.current.srcObject = event.streams[0];
+          videoRef.current.muted = false;
+          videoRef.current.play().catch(console.error);
+          setConnectionStatus("Live");
+        }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          roomChannel.send({
+            type: "broadcast",
+            event: "webrtc-signal",
+            payload: { type: "ice", sender: currentUsername, target: selectedStreamer, payload: event.candidate }
+          });
+        }
+      };
+
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        roomChannel.send({
+          type: "broadcast",
+          event: "webrtc-signal",
+          payload: { type: "offer", sender: currentUsername, target: selectedStreamer, payload: pc.localDescription }
+        });
+      } catch (err) {
+        console.error("[v0] Failed to create offer:", err);
+        scheduleReconnect();
+      }
+    };
+
+    const scheduleReconnect = () => {
+      if (isCleanedUp || isHost) return;
+      if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        setConnectionStatus("Unable to connect. Tap to retry.");
+        return;
+      }
+      reconnectAttempts += 1;
+      // Exponential backoff capped at 8s.
+      const delay = Math.min(1000 * 2 ** (reconnectAttempts - 1), 8000);
+      setConnectionStatus(`Reconnecting (${reconnectAttempts})...`);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        setupViewerConnection();
+      }, delay);
     };
 
     roomChannel
@@ -169,20 +282,25 @@ export default function StreamingPage() {
         if (payload.target !== currentUsername) return;
 
         const { type, sender, payload: signal } = payload;
-        console.log("Signal received:", type, "from:", sender);
+        console.log("[v0] Signal received:", type, "from:", sender);
 
         if (isHost) {
           let pc = peerConnectionsRef.current.get(sender);
 
           if (type === "offer") {
+            // Fresh viewer OR an ICE-restart re-offer from an existing viewer.
             if (!pc) {
               pc = new RTCPeerConnection(iceServers);
               peerConnectionsRef.current.set(sender, pc);
 
               pc.onconnectionstatechange = () => {
-                console.log(`Host -> Viewer (${sender}) state:`, pc?.connectionState);
+                console.log(`[v0] Host -> Viewer (${sender}) state:`, pc?.connectionState);
                 if (pc?.connectionState === "connected") {
                   setConnectionStatus("Live");
+                }
+                if (pc?.connectionState === "failed" || pc?.connectionState === "closed") {
+                  pc?.close();
+                  peerConnectionsRef.current.delete(sender);
                 }
               };
 
@@ -219,7 +337,7 @@ export default function StreamingPage() {
               try {
                 await pc.addIceCandidate(new RTCIceCandidate(signal));
               } catch (e) {
-                console.error("Host ICE error:", e);
+                console.error("[v0] Host ICE error:", e);
               }
             } else {
               const queue = pendingCandidatesRef.current.get(sender) || [];
@@ -232,6 +350,8 @@ export default function StreamingPage() {
           if (!pc) return;
 
           if (type === "answer") {
+            // Ignore stale answers if we've already progressed past negotiation.
+            if (pc.signalingState === "stable") return;
             await pc.setRemoteDescription(new RTCSessionDescription(signal));
             await addBufferedCandidates(pc, selectedStreamer);
           } else if (type === "ice") {
@@ -239,7 +359,7 @@ export default function StreamingPage() {
               try {
                 await pc.addIceCandidate(new RTCIceCandidate(signal));
               } catch (e) {
-                console.error("Viewer ICE error:", e);
+                console.error("[v0] Viewer ICE error:", e);
               }
             } else {
               const queue = pendingCandidatesRef.current.get(selectedStreamer) || [];
@@ -252,57 +372,13 @@ export default function StreamingPage() {
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED" && !isHost) {
           setConnectionStatus("Connecting to stream...");
-          const oldPc = peerConnectionsRef.current.get(selectedStreamer);
-          if (oldPc) oldPc.close();
-
-          const pc = new RTCPeerConnection(iceServers);
-          peerConnectionsRef.current.set(selectedStreamer, pc);
-
-          pc.onconnectionstatechange = () => {
-            console.log("Viewer connection state:", pc.connectionState);
-            if (pc.connectionState === "connected") {
-              setConnectionStatus("Live");
-            } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
-              setConnectionStatus("Connection lost. Reconnecting...");
-            }
-          };
-
-          pc.ontrack = (event) => {
-            console.log("Viewer received remote track!", event.streams[0]);
-            if (videoRef.current) {
-              videoRef.current.srcObject = event.streams[0];
-              videoRef.current.muted = false;
-              videoRef.current.play().catch(console.error);
-              setConnectionStatus("Live");
-            }
-          };
-
-          pc.onicecandidate = (event) => {
-            if (event.candidate) {
-              roomChannel.send({
-                type: "broadcast",
-                event: "webrtc-signal",
-                payload: { type: "ice", sender: currentUsername, target: selectedStreamer, payload: event.candidate }
-              });
-            }
-          };
-
-          try {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            roomChannel.send({
-              type: "broadcast",
-              event: "webrtc-signal",
-              payload: { type: "offer", sender: currentUsername, target: selectedStreamer, payload: pc.localDescription }
-            });
-          } catch (err) {
-            console.error("Failed to create offer:", err);
-            setConnectionStatus("Failed to connect");
-          }
+          await setupViewerConnection();
         }
       });
 
     return () => {
+      isCleanedUp = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       peerConnectionsRef.current.forEach((pc) => pc.close());
       peerConnectionsRef.current.clear();
       pendingCandidatesRef.current.clear();
@@ -622,9 +698,9 @@ export default function StreamingPage() {
   // ==========================================
   return (
     <div className="fixed inset-0 z-[99999] bg-black w-screen h-screen flex flex-col items-center justify-center overflow-hidden p-0 m-0">
-      
+
       <div className="relative bg-black w-full h-full flex flex-col justify-end overflow-hidden">
-        
+
         <video
           ref={videoRef}
           autoPlay
