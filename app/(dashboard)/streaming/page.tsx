@@ -52,7 +52,7 @@ export default function StreamingPage() {
   const [messages, setMessages] = useState<StreamChatMessage[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
 
   // Load user details
   useEffect(() => {
@@ -119,6 +119,115 @@ export default function StreamingPage() {
     };
   }, [supabase, fetchActiveStreams]);
 
+  // WebRTC P2P Signaling via Supabase Broadcast
+  useEffect(() => {
+    if (!selectedStreamer || !currentUsername || currentUsername === "Guest") return;
+
+    const channelName = `room-rtc-${selectedStreamer}`;
+    const channel = supabase.channel(channelName, {
+      config: { broadcast: { self: false } }
+    });
+
+    const configuration = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+
+    if (selectedStreamer === currentUsername && isStreaming) {
+      // HOST LOGIC: Listens for viewer connection requests
+      channel.on("broadcast", { event: "signal" }, async ({ payload }) => {
+        if (payload.type === "offer" && payload.target === currentUsername) {
+          const pc = new RTCPeerConnection(configuration);
+          pcRef.current = pc;
+
+          if (videoRef.current && videoRef.current.srcObject) {
+            const localStream = videoRef.current.srcObject as MediaStream;
+            localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+          }
+
+          pc.onicecandidate = (event) => {
+            if (event.candidate) {
+              channel.send({
+                type: "broadcast",
+                event: "signal",
+                payload: { type: "ice", target: payload.sender, sender: currentUsername, candidate: event.candidate }
+              });
+            }
+          };
+
+          await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+
+          channel.send({
+            type: "broadcast",
+            event: "signal",
+            payload: { type: "answer", target: payload.sender, sender: currentUsername, sdp: pc.localDescription }
+          });
+        } else if (payload.type === "ice" && payload.target === currentUsername) {
+          if (pcRef.current) {
+            try {
+              await pcRef.current.addIceCandidate(new RTCIceCandidate(payload.candidate));
+            } catch (e) {
+              console.error("Error adding ice candidate", e);
+            }
+          }
+        }
+      });
+
+      channel.subscribe();
+    } else if (selectedStreamer !== currentUsername) {
+      // VIEWER LOGIC: Connects to host stream
+      const pc = new RTCPeerConnection(configuration);
+      pcRef.current = pc;
+
+      pc.ontrack = (event) => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = event.streams[0];
+        }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          channel.send({
+            type: "broadcast",
+            event: "signal",
+            payload: { type: "ice", target: selectedStreamer, sender: currentUsername, candidate: event.candidate }
+          });
+        }
+      };
+
+      channel.on("broadcast", { event: "signal" }, async ({ payload }) => {
+        if (payload.type === "answer" && payload.target === currentUsername) {
+          await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+        } else if (payload.type === "ice" && payload.target === currentUsername) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
+          } catch (e) {
+            console.error("Error adding ice candidate", e);
+          }
+        }
+      });
+
+      channel.subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          channel.send({
+            type: "broadcast",
+            event: "signal",
+            payload: { type: "offer", target: selectedStreamer, sender: currentUsername, sdp: pc.localDescription }
+          });
+        }
+      });
+    }
+
+    return () => {
+      if (pcRef.current) {
+        pcRef.current.close();
+        pcRef.current = null;
+      }
+      supabase.removeChannel(channel);
+    };
+  }, [selectedStreamer, currentUsername, isStreaming, supabase]);
+
   // Helper to terminate active streams for this user in DB
   const closeUserActiveStreams = async (username: string) => {
     await supabase
@@ -128,15 +237,13 @@ export default function StreamingPage() {
       .eq("is_active", true);
   };
 
-  // Request browser full screen mode for true TikTok-like immersive view
+  // Request browser full screen mode
   const enterFullScreen = () => {
     const elem = document.documentElement as any;
     if (elem.requestFullscreen) {
       elem.requestFullscreen().catch(() => {});
     } else if (elem.webkitRequestFullscreen) {
       elem.webkitRequestFullscreen();
-    } else if (elem.msRequestFullscreen) {
-      elem.msRequestFullscreen();
     }
   };
 
@@ -149,7 +256,7 @@ export default function StreamingPage() {
     }
   };
 
-  // Toggle Live Streaming & Connect Mobile/Desktop Camera
+  // Toggle Live Streaming & Connect Camera
   const toggleLive = async () => {
     if (!isApproved) {
       alert("Live streaming is only available to approved members.");
@@ -165,7 +272,6 @@ export default function StreamingPage() {
         await supabase.from("stream_messages").delete().neq("id", "00000000-0000-0000-0000-000000000000");
         setMessages([]);
 
-        // Request front camera access for mobile & desktop
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "user", width: { ideal: 1080 }, height: { ideal: 1920 } },
           audio: true,
@@ -192,7 +298,7 @@ export default function StreamingPage() {
         }
       } catch (err) {
         console.error("Camera access failed:", err);
-        alert("Could not access camera or microphone. Please ensure camera permissions are allowed in your browser settings.");
+        alert("Could not access camera or microphone. Please ensure camera permissions are allowed.");
       }
     } else {
       if (videoRef.current && videoRef.current.srcObject) {
@@ -285,7 +391,7 @@ export default function StreamingPage() {
     };
   }, [supabase]);
 
-  // Realtime Presence for Viewers
+  // Realtime Presence for Viewers (Excluding the Host from the viewers list)
   useEffect(() => {
     if (!currentUsername || currentUsername === "Guest" || !selectedStreamer) return;
 
@@ -299,7 +405,10 @@ export default function StreamingPage() {
         const activeViewers: Viewer[] = [];
         Object.values(state).forEach((presences: any) => {
           presences.forEach((p: any) => {
-            if (p.username) activeViewers.push({ username: p.username, photo_url: p.photo_url });
+            // Exclude the streamer themselves from showing as an active viewer of their own stream
+            if (p.username && p.username !== selectedStreamer) {
+              activeViewers.push({ username: p.username, photo_url: p.photo_url });
+            }
           });
         });
         setViewersList(activeViewers);
@@ -428,12 +537,11 @@ export default function StreamingPage() {
   }
 
   // ==========================================
-  // STATE 2: ACTIVE STREAM ROOM VIEW (True Full-Screen Over-take, Zero Browser Chrome)
+  // STATE 2: ACTIVE STREAM ROOM VIEW (Immersive Full Screen, Mirror Flipped, Contain Zoom)
   // ==========================================
   return (
-    <div ref={containerRef} className="fixed inset-0 z-[99999] bg-white w-screen h-screen flex flex-col items-center justify-center overflow-hidden p-0 m-0">
+    <div className="fixed inset-0 z-[99999] bg-white w-screen h-screen flex flex-col items-center justify-center overflow-hidden p-0 m-0">
       
-      {/* Stream Container: True edge-to-edge full screen on mobile, phone-framed box on desktop */}
       <div className="relative bg-black w-full h-full md:w-auto md:h-screen md:max-h-screen md:aspect-[9/16] md:rounded-none md:border-0 md:overflow-hidden flex flex-col justify-end group">
         
         <video
@@ -441,7 +549,7 @@ export default function StreamingPage() {
           autoPlay
           playsInline
           muted={selectedStreamer === currentUsername}
-          className="absolute inset-0 w-full h-full object-cover"
+          className="absolute inset-0 w-full h-full object-contain bg-black transform -scale-x-100"
         />
 
         {/* Top-Left Controls */}
