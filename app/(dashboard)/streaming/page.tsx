@@ -131,7 +131,7 @@ export default function StreamingPage() {
     };
   }, [supabase, fetchActiveStreams]);
 
-  // WebRTC P2P Signaling with robust ICE candidate queueing and state sync
+  // WebRTC P2P Signaling
   useEffect(() => {
     if (!selectedStreamer || !currentUsername || currentUsername === "Guest") return;
 
@@ -241,7 +241,7 @@ export default function StreamingPage() {
       pc.ontrack = async (event) => {
         if (videoRef.current) {
           videoRef.current.srcObject = event.streams[0];
-          videoRef.current.muted = false; // Ensure sound plays for viewers
+          videoRef.current.muted = false;
           try {
             await videoRef.current.play();
             setConnectionStatus("Live");
@@ -303,12 +303,11 @@ export default function StreamingPage() {
     const doc = document as any;
     if (doc.exitFullscreen && document.fullscreenElement) {
       doc.exitFullscreen().catch(() => {});
-    } else if (doc.webkitExitFullscreen && doc.webkitFullscreenElement) {
+    } else if (doc.webkitExitFullscreen && doc.webkitExitFullscreen) {
       doc.webkitExitFullscreen();
     }
   };
 
-  // Toggle Live Streaming with Host Camera Binding
   const toggleLive = async () => {
     if (!isApproved) {
       alert("Live streaming is only available to approved members.");
@@ -341,7 +340,7 @@ export default function StreamingPage() {
         setTimeout(async () => {
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
-            videoRef.current.muted = true; // Mute local host preview to prevent echo
+            videoRef.current.muted = true;
             try {
               await videoRef.current.play();
             } catch (err) {
@@ -593,19 +592,19 @@ export default function StreamingPage() {
   }
 
   // ==========================================
-  // STATE 2: ACTIVE STREAM ROOM VIEW
+  // STATE 2: ACTIVE STREAM ROOM VIEW (True Fullscreen Edge-to-Edge with Floating Chat Overlay)
   // ==========================================
   return (
-    <div className="fixed inset-0 z-[99999] bg-white w-screen h-screen flex flex-col items-center justify-center overflow-hidden p-0 m-0">
+    <div className="fixed inset-0 z-[99999] bg-black w-screen h-screen flex flex-col items-center justify-center overflow-hidden p-0 m-0">
       
-      <div className="relative bg-black w-full h-full md:w-auto md:h-screen md:max-h-screen md:aspect-[9/16] md:rounded-none md:border-0 md:overflow-hidden flex flex-col justify-end group">
+      <div className="relative bg-black w-full h-full flex flex-col justify-end overflow-hidden">
         
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted={selectedStreamer === currentUsername}
-          className="absolute inset-0 w-full h-full object-contain bg-black transform -scale-x-100"
+          className="absolute inset-0 w-full h-full object-cover bg-black transform -scale-x-100"
         />
 
         <div className="absolute top-16 left-4 z-30">
@@ -670,8 +669,8 @@ export default function StreamingPage() {
         </div>
 
         {/* Bottom Overlay: Chat Feed & Input */}
-        <div className="relative z-30 bg-gradient-to-t from-black/95 via-zinc-950/80 to-transparent pt-8 pb-6 px-4 w-full flex flex-col justify-end max-h-[40%]">
-          <div className="overflow-y-auto space-y-1.5 mb-2 max-h-32 pr-1 text-xs [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-600 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
+        <div className="absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/95 via-zinc-950/60 to-transparent pt-12 pb-6 px-4 flex flex-col justify-end max-h-[50%]">
+          <div className="overflow-y-auto space-y-1.5 mb-2 max-h-40 pr-1 text-xs [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-600 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
             {messages.length === 0 ? (
               <div className="text-center text-[10px] text-zinc-400 py-1">No comments yet. Say something!</div>
             ) : (
@@ -692,7 +691,7 @@ export default function StreamingPage() {
                 placeholder="Send a comment..."
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-zinc-900/90 border border-zinc-700 rounded-lg focus:outline-none focus:border-[#e7b833] text-white font-medium placeholder:text-zinc-500 backdrop-blur-sm shadow-inner"
+                className="w-full px-3 py-2.5 text-xs bg-zinc-900/90 border border-zinc-700 rounded-lg focus:outline-none focus:border-[#e7b833] text-white font-medium placeholder:text-zinc-500 backdrop-blur-sm shadow-inner"
               />
               <button
                 type="submit"
