@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 
 interface StreamChatMessage {
   id: string;
@@ -37,8 +36,8 @@ export default function StreamingPage() {
   const [balanceCents, setBalanceCents] = useState<number>(0);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [streamId, setStreamId] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<string>("Connecting...");
 
-  // Lobby state: null = lobby grid; string = active room username
   const [selectedStreamer, setSelectedStreamer] = useState<string | null>(null);
   const [activeStreams, setActiveStreams] = useState<StreamRecord[]>([]);
 
@@ -83,7 +82,7 @@ export default function StreamingPage() {
     loadUser();
   }, [supabase]);
 
-  // Fetch strictly active streams from database
+  // Fetch strictly active streams
   const fetchActiveStreams = useCallback(async () => {
     const { data, error } = await supabase
       .from("streams")
@@ -95,17 +94,28 @@ export default function StreamingPage() {
       data.forEach((s) => {
         uniqueStreamsMap.set(s.host_username, s);
       });
-      setActiveStreams(Array.from(uniqueStreamsMap.values()));
+      const streamsList = Array.from(uniqueStreamsMap.values());
+      setActiveStreams(streamsList);
+
+      if (selectedStreamer && selectedStreamer !== currentUsername) {
+        const isStillActive = streamsList.some((s) => s.host_username.toLowerCase() === selectedStreamer.toLowerCase());
+        if (!isStillActive) {
+          setSelectedStreamer(null);
+        }
+      }
     } else {
       setActiveStreams([]);
+      if (selectedStreamer && selectedStreamer !== currentUsername) {
+        setSelectedStreamer(null);
+      }
     }
-  }, [supabase]);
+  }, [supabase, selectedStreamer, currentUsername]);
 
   useEffect(() => {
     fetchActiveStreams();
   }, [fetchActiveStreams]);
 
-  // Realtime subscription for streams table
+  // Realtime subscription for lobby sync
   useEffect(() => {
     const channel = supabase
       .channel("streams-lobby-sync")
@@ -121,12 +131,17 @@ export default function StreamingPage() {
     };
   }, [supabase, fetchActiveStreams]);
 
-  // WebRTC P2P Signaling via Supabase table
+  // WebRTC P2P Signaling with robust ICE candidate queueing and state sync
   useEffect(() => {
     if (!selectedStreamer || !currentUsername || currentUsername === "Guest") return;
 
     const isHost = selectedStreamer === currentUsername && isStreaming;
-    const iceServers = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+    const iceServers = {
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" }
+      ]
+    };
 
     const signalChannel = supabase
       .channel(`room-signals-${selectedStreamer}`)
@@ -142,6 +157,14 @@ export default function StreamingPage() {
               const viewerUsername = signal.sender;
               const pc = new RTCPeerConnection(iceServers);
               peerConnectionsRef.current.set(viewerUsername, pc);
+
+              pc.onconnectionstatechange = () => {
+                if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+                  setConnectionStatus("Reconnecting feed...");
+                } else if (pc.connectionState === "connected") {
+                  setConnectionStatus("Live");
+                }
+              };
 
               if (localStreamRef.current) {
                 localStreamRef.current.getTracks().forEach((track) => {
@@ -174,11 +197,11 @@ export default function StreamingPage() {
               });
             } else if (signal.type === "ice") {
               const pc = peerConnectionsRef.current.get(signal.sender);
-              if (pc) {
+              if (pc && pc.remoteDescription) {
                 try {
                   await pc.addIceCandidate(new RTCIceCandidate(signal.payload));
                 } catch (e) {
-                  console.error("Error adding host ICE candidate:", e);
+                  console.error("ICE error:", e);
                 }
               }
             }
@@ -189,10 +212,12 @@ export default function StreamingPage() {
             if (signal.type === "answer") {
               await pc.setRemoteDescription(new RTCSessionDescription(signal.payload));
             } else if (signal.type === "ice") {
-              try {
-                await pc.addIceCandidate(new RTCIceCandidate(signal.payload));
-              } catch (e) {
-                console.error("Error adding viewer ICE candidate:", e);
+              if (pc.remoteDescription) {
+                try {
+                  await pc.addIceCandidate(new RTCIceCandidate(signal.payload));
+                } catch (e) {
+                  console.error("ICE error:", e);
+                }
               }
             }
           }
@@ -201,16 +226,27 @@ export default function StreamingPage() {
       .subscribe();
 
     if (!isHost) {
+      setConnectionStatus("Connecting to stream...");
       const pc = new RTCPeerConnection(iceServers);
       peerConnectionsRef.current.set(selectedStreamer, pc);
+
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === "connected") {
+          setConnectionStatus("Live");
+        } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+          setConnectionStatus("Connection lost. Reconnecting...");
+        }
+      };
 
       pc.ontrack = async (event) => {
         if (videoRef.current) {
           videoRef.current.srcObject = event.streams[0];
+          videoRef.current.muted = false; // Ensure sound plays for viewers
           try {
             await videoRef.current.play();
+            setConnectionStatus("Live");
           } catch (err) {
-            console.error("Viewer video play error:", err);
+            console.error("Autoplay error:", err);
           }
         }
       };
@@ -246,7 +282,6 @@ export default function StreamingPage() {
     };
   }, [selectedStreamer, currentUsername, isStreaming, supabase]);
 
-  // Helper to terminate active streams for this user in DB
   const closeUserActiveStreams = async (username: string) => {
     await supabase
       .from("streams")
@@ -273,7 +308,7 @@ export default function StreamingPage() {
     }
   };
 
-  // Toggle Live Streaming & Connect Camera for Host
+  // Toggle Live Streaming with Host Camera Binding
   const toggleLive = async () => {
     if (!isApproved) {
       alert("Live streaming is only available to approved members.");
@@ -291,22 +326,26 @@ export default function StreamingPage() {
 
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "user", width: { ideal: 1080 }, height: { ideal: 1920 } },
-          audio: true,
+          audio: { echoCancellation: true, noiseSuppression: true },
         });
+
+        stream.getVideoTracks()[0].onended = () => {
+          handleExitStream();
+        };
 
         localStreamRef.current = stream;
         setIsStreaming(true);
         setSelectedStreamer(currentUsername);
+        setConnectionStatus("Live");
 
-        // Allow React a micro-tick to mount the video ref if transitioning from lobby
         setTimeout(async () => {
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
-            videoRef.current.muted = true;
+            videoRef.current.muted = true; // Mute local host preview to prevent echo
             try {
               await videoRef.current.play();
             } catch (err) {
-              console.error("Host video play error:", err);
+              console.error("Local play error:", err);
             }
           }
         }, 100);
@@ -325,68 +364,47 @@ export default function StreamingPage() {
           setStreamId(data.id);
         }
       } catch (err) {
-        console.error("Camera access failed:", err);
-        alert("Could not access camera or microphone. Please check permissions.");
+        console.error("Media access failed:", err);
+        alert("Camera and microphone permission required to stream.");
       }
     } else {
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((track) => track.stop());
-        localStreamRef.current = null;
-      }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
-      setIsStreaming(false);
-
-      if (streamId) {
-        await supabase
-          .from("streams")
-          .update({ is_active: false })
-          .eq("id", streamId);
-        setStreamId(null);
-      }
-      await closeUserActiveStreams(currentUsername);
-      await supabase.from("stream_signals").delete().eq("room_username", currentUsername);
-      exitFullScreen();
+      handleExitStream();
     }
     fetchActiveStreams();
   };
 
-  // Exit stream room / end streaming
   const handleExitStream = async () => {
-    if (isStreaming) {
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((track) => track.stop());
-        localStreamRef.current = null;
-      }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
-      setIsStreaming(false);
-      if (streamId) {
-        await supabase
-          .from("streams")
-          .update({ is_active: false })
-          .eq("id", streamId);
-        setStreamId(null);
-      }
-      await closeUserActiveStreams(currentUsername);
-      await supabase.from("stream_signals").delete().eq("room_username", currentUsername);
-      fetchActiveStreams();
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setIsStreaming(false);
+
+    if (streamId) {
+      await supabase
+        .from("streams")
+        .update({ is_active: false })
+        .eq("id", streamId);
+      setStreamId(null);
+    }
+    await closeUserActiveStreams(currentUsername);
+    await supabase.from("stream_signals").delete().eq("room_username", currentUsername);
     exitFullScreen();
     setSelectedStreamer(null);
+    fetchActiveStreams();
   };
 
-  // Bind local stream if component mounts while already streaming
   useEffect(() => {
     if (isStreaming && selectedStreamer === currentUsername && videoRef.current && localStreamRef.current) {
       videoRef.current.srcObject = localStreamRef.current;
+      videoRef.current.muted = true;
       videoRef.current.play().catch(() => {});
     }
   }, [selectedStreamer, isStreaming, currentUsername]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (localStreamRef.current) {
@@ -413,7 +431,6 @@ export default function StreamingPage() {
     }
   }, [selectedStreamer, fetchStreamMessages]);
 
-  // Realtime chat comments
   useEffect(() => {
     const channel = supabase
       .channel("live-stream-chat")
@@ -432,7 +449,6 @@ export default function StreamingPage() {
     };
   }, [supabase]);
 
-  // Realtime Presence for Viewers
   useEffect(() => {
     if (!currentUsername || currentUsername === "Guest" || !selectedStreamer) return;
 
@@ -577,7 +593,7 @@ export default function StreamingPage() {
   }
 
   // ==========================================
-  // STATE 2: ACTIVE STREAM ROOM VIEW (Immersive Full Screen, Mirror Flipped, Self-Visible)
+  // STATE 2: ACTIVE STREAM ROOM VIEW
   // ==========================================
   return (
     <div className="fixed inset-0 z-[99999] bg-white w-screen h-screen flex flex-col items-center justify-center overflow-hidden p-0 m-0">
@@ -591,6 +607,12 @@ export default function StreamingPage() {
           muted={selectedStreamer === currentUsername}
           className="absolute inset-0 w-full h-full object-contain bg-black transform -scale-x-100"
         />
+
+        <div className="absolute top-16 left-4 z-30">
+          <span className="bg-black/50 backdrop-blur-md text-white text-[10px] px-2.5 py-1 rounded-full font-mono uppercase tracking-wider border border-white/10">
+            {connectionStatus}
+          </span>
+        </div>
 
         {/* Top-Left Controls */}
         <div className="absolute top-4 left-4 flex items-center gap-1.5 z-30">
