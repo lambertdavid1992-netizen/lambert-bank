@@ -2,11 +2,14 @@
 
 import { useState, useEffect } from "react";
 import { createBrowserClient } from "@supabase/ssr";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import Navbar, { Sidebar } from "@/components/Navbar";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const isStreamingPage = pathname?.includes("/streaming");
+
   const supabase = createBrowserClient(
     "https://bucijzexpxsuxvsnwwyu.supabase.co",
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1Y2lqemV4cHhzdXh2c253d3l1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5MzM2NjAsImV4cCI6MjEwNDUwOTY2MH0.Gr34yXf6UDlZq54nEKZAvaUCnfXla26LoVSH3YY5u1M"
@@ -38,6 +41,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [router, supabase]);
 
   if (!mounted || !currentUsername) return null;
+
+  // If the user is on the streaming page, render children raw without the dashboard shell/sidebar/navbar
+  if (isStreamingPage) {
+    return <>{children}</>;
+  }
 
   return (
     <div className="min-h-screen bg-[#f3f4f6] text-[#222222] font-sans antialiased">
