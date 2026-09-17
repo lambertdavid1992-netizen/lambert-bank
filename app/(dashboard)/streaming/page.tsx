@@ -131,7 +131,7 @@ export default function StreamingPage() {
     };
   }, [supabase, fetchActiveStreams]);
 
-  // WebRTC P2P Signaling
+  // WebRTC P2P Signaling via Supabase Broadcast Channels (Instant & Error-Free)
   useEffect(() => {
     if (!selectedStreamer || !currentUsername || currentUsername === "Guest") return;
 
@@ -143,142 +143,131 @@ export default function StreamingPage() {
       ]
     };
 
-    const signalChannel = supabase
-      .channel(`room-signals-${selectedStreamer}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "stream_signals", filter: `room_username.eq.${selectedStreamer}` },
-        async (payload) => {
-          const signal = payload.new as any;
-          if (signal.target !== currentUsername) return;
+    const roomChannel = supabase.channel(`room-broadcast-${selectedStreamer}`, {
+      config: { broadcast: { self: false } }
+    });
 
-          if (isHost) {
-            if (signal.type === "offer") {
-              const viewerUsername = signal.sender;
-              const pc = new RTCPeerConnection(iceServers);
-              peerConnectionsRef.current.set(viewerUsername, pc);
+    roomChannel
+      .on("broadcast", { event: "webrtc-signal" }, async ({ payload }) => {
+        if (payload.target !== currentUsername) return;
 
-              pc.onconnectionstatechange = () => {
-                if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-                  setConnectionStatus("Reconnecting feed...");
-                } else if (pc.connectionState === "connected") {
-                  setConnectionStatus("Live");
-                }
-              };
+        if (isHost) {
+          if (payload.type === "offer") {
+            const viewerUsername = payload.sender;
+            const pc = new RTCPeerConnection(iceServers);
+            peerConnectionsRef.current.set(viewerUsername, pc);
 
-              if (localStreamRef.current) {
-                localStreamRef.current.getTracks().forEach((track) => {
-                  pc.addTrack(track, localStreamRef.current!);
+            pc.onconnectionstatechange = () => {
+              if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+                setConnectionStatus("Reconnecting feed...");
+              } else if (pc.connectionState === "connected") {
+                setConnectionStatus("Live");
+              }
+            };
+
+            if (localStreamRef.current) {
+              localStreamRef.current.getTracks().forEach((track) => {
+                pc.addTrack(track, localStreamRef.current!);
+              });
+            }
+
+            pc.onicecandidate = (event) => {
+              if (event.candidate) {
+                roomChannel.send({
+                  type: "broadcast",
+                  event: "webrtc-signal",
+                  payload: { type: "ice", sender: currentUsername, target: viewerUsername, payload: event.candidate }
                 });
               }
+            };
 
-              pc.onicecandidate = (event) => {
-                if (event.candidate) {
-                  supabase.from("stream_signals").insert({
-                    room_username: selectedStreamer,
-                    sender: currentUsername,
-                    target: viewerUsername,
-                    type: "ice",
-                    payload: event.candidate,
-                  });
-                }
-              };
+            await pc.setRemoteDescription(new RTCSessionDescription(payload.payload));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
 
-              await pc.setRemoteDescription(new RTCSessionDescription(signal.payload));
-              const answer = await pc.createAnswer();
-              await pc.setLocalDescription(answer);
+            roomChannel.send({
+              type: "broadcast",
+              event: "webrtc-signal",
+              payload: { type: "answer", sender: currentUsername, target: viewerUsername, payload: pc.localDescription }
+            });
+          } else if (payload.type === "ice") {
+            const pc = peerConnectionsRef.current.get(payload.sender);
+            if (pc && pc.remoteDescription) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(payload.payload));
+              } catch (e) {
+                console.error("ICE error:", e);
+              }
+            }
+          }
+        } else {
+          const pc = peerConnectionsRef.current.get(selectedStreamer);
+          if (!pc) return;
 
-              await supabase.from("stream_signals").insert({
-                room_username: selectedStreamer,
-                sender: currentUsername,
-                target: viewerUsername,
-                type: "answer",
-                payload: pc.localDescription,
+          if (payload.type === "answer") {
+            await pc.setRemoteDescription(new RTCSessionDescription(payload.payload));
+          } else if (payload.type === "ice") {
+            if (pc.remoteDescription) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(payload.payload));
+              } catch (e) {
+                console.error("ICE error:", e);
+              }
+            }
+          }
+        }
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED" && !isHost) {
+          setConnectionStatus("Connecting to stream...");
+          const pc = new RTCPeerConnection(iceServers);
+          peerConnectionsRef.current.set(selectedStreamer, pc);
+
+          pc.onconnectionstatechange = () => {
+            if (pc.connectionState === "connected") {
+              setConnectionStatus("Live");
+            } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+              setConnectionStatus("Connection lost. Reconnecting...");
+            }
+          };
+
+          pc.ontrack = async (event) => {
+            if (videoRef.current) {
+              videoRef.current.srcObject = event.streams[0];
+              videoRef.current.muted = false;
+              try {
+                await videoRef.current.play();
+                setConnectionStatus("Live");
+              } catch (err) {
+                console.error("Autoplay error:", err);
+              }
+            }
+          };
+
+          pc.onicecandidate = (event) => {
+            if (event.candidate) {
+              roomChannel.send({
+                type: "broadcast",
+                event: "webrtc-signal",
+                payload: { type: "ice", sender: currentUsername, target: selectedStreamer, payload: event.candidate }
               });
-            } else if (signal.type === "ice") {
-              const pc = peerConnectionsRef.current.get(signal.sender);
-              if (pc && pc.remoteDescription) {
-                try {
-                  await pc.addIceCandidate(new RTCIceCandidate(signal.payload));
-                } catch (e) {
-                  console.error("ICE error:", e);
-                }
-              }
             }
-          } else {
-            const pc = peerConnectionsRef.current.get(selectedStreamer);
-            if (!pc) return;
+          };
 
-            if (signal.type === "answer") {
-              await pc.setRemoteDescription(new RTCSessionDescription(signal.payload));
-            } else if (signal.type === "ice") {
-              if (pc.remoteDescription) {
-                try {
-                  await pc.addIceCandidate(new RTCIceCandidate(signal.payload));
-                } catch (e) {
-                  console.error("ICE error:", e);
-                }
-              }
-            }
-          }
-        }
-      )
-      .subscribe();
-
-    if (!isHost) {
-      setConnectionStatus("Connecting to stream...");
-      const pc = new RTCPeerConnection(iceServers);
-      peerConnectionsRef.current.set(selectedStreamer, pc);
-
-      pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "connected") {
-          setConnectionStatus("Live");
-        } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
-          setConnectionStatus("Connection lost. Reconnecting...");
-        }
-      };
-
-      pc.ontrack = async (event) => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = event.streams[0];
-          videoRef.current.muted = false;
-          try {
-            await videoRef.current.play();
-            setConnectionStatus("Live");
-          } catch (err) {
-            console.error("Autoplay error:", err);
-          }
-        }
-      };
-
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          supabase.from("stream_signals").insert({
-            room_username: selectedStreamer,
-            sender: currentUsername,
-            target: selectedStreamer,
-            type: "ice",
-            payload: event.candidate,
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          roomChannel.send({
+            type: "broadcast",
+            event: "webrtc-signal",
+            payload: { type: "offer", sender: currentUsername, target: selectedStreamer, payload: pc.localDescription }
           });
         }
-      };
-
-      pc.createOffer().then(async (offer) => {
-        await pc.setLocalDescription(offer);
-        await supabase.from("stream_signals").insert({
-          room_username: selectedStreamer,
-          sender: currentUsername,
-          target: selectedStreamer,
-          type: "offer",
-          payload: pc.localDescription,
-        });
       });
-    }
 
     return () => {
       peerConnectionsRef.current.forEach((pc) => pc.close());
       peerConnectionsRef.current.clear();
-      supabase.removeChannel(signalChannel);
+      supabase.removeChannel(roomChannel);
     };
   }, [selectedStreamer, currentUsername, isStreaming, supabase]);
 
@@ -303,7 +292,7 @@ export default function StreamingPage() {
     const doc = document as any;
     if (doc.exitFullscreen && document.fullscreenElement) {
       doc.exitFullscreen().catch(() => {});
-    } else if (doc.webkitExitFullscreen && doc.webkitExitFullscreen) {
+    } else if (doc.webkitExitFullscreen && doc.webkitFullscreenElement) {
       doc.webkitExitFullscreen();
     }
   };
@@ -320,7 +309,6 @@ export default function StreamingPage() {
         await closeUserActiveStreams(currentUsername);
 
         await supabase.from("stream_messages").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-        await supabase.from("stream_signals").delete().eq("room_username", currentUsername);
         setMessages([]);
 
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -390,7 +378,6 @@ export default function StreamingPage() {
       setStreamId(null);
     }
     await closeUserActiveStreams(currentUsername);
-    await supabase.from("stream_signals").delete().eq("room_username", currentUsername);
     exitFullScreen();
     setSelectedStreamer(null);
     fetchActiveStreams();
