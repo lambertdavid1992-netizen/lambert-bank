@@ -28,7 +28,7 @@ export default function StreamingPage() {
   const router = useRouter();
   const supabase = createBrowserClient(
     "https://bucijzexpxsuxvsnwwyu.supabase.co",
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1Y2lqemV4cHhzdXh2c253d3l1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5MzM2NjAsImV4cCI6MjEwNDUwOTY2MH0.Gr34yXf6UDlZq54nEKZAvaUCnfXla26LoVSH3YY5u1M"
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1Y2lqemV4cHhzdXh2c253d3l1I","role":"anon","iat":1788933660,"exp":2104509660}
   );
 
   const [currentUsername, setCurrentUsername] = useState<string>("Guest");
@@ -50,9 +50,11 @@ export default function StreamingPage() {
 
   const [chatInput, setChatInput] = useState<string>("");
   const [messages, setMessages] = useState<StreamChatMessage[]>([]);
+  
   const chatEndRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
 
   // Load user details
   useEffect(() => {
@@ -119,64 +121,91 @@ export default function StreamingPage() {
     };
   }, [supabase, fetchActiveStreams]);
 
-  // WebRTC P2P Signaling via Supabase Broadcast
+  // WebRTC P2P Signaling via Supabase table
   useEffect(() => {
     if (!selectedStreamer || !currentUsername || currentUsername === "Guest") return;
 
-    const channelName = `room-rtc-${selectedStreamer}`;
-    const channel = supabase.channel(channelName, {
-      config: { broadcast: { self: false } }
-    });
+    const isHost = selectedStreamer === currentUsername && isStreaming;
+    const iceServers = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
-    const configuration = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+    const signalChannel = supabase
+      .channel(`room-signals-${selectedStreamer}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "stream_signals", filter: `room_username.eq.${selectedStreamer}` },
+        async (payload) => {
+          const signal = payload.new as any;
+          if (signal.target !== currentUsername) return;
 
-    if (selectedStreamer === currentUsername && isStreaming) {
-      // HOST LOGIC: Listens for viewer connection requests
-      channel.on("broadcast", { event: "signal" }, async ({ payload }) => {
-        if (payload.type === "offer" && payload.target === currentUsername) {
-          const pc = new RTCPeerConnection(configuration);
-          pcRef.current = pc;
+          if (isHost) {
+            // HOST handling incoming viewer offer
+            if (signal.type === "offer") {
+              const viewerUsername = signal.sender;
+              const pc = new RTCPeerConnection(iceServers);
+              peerConnectionsRef.current.set(viewerUsername, pc);
 
-          if (videoRef.current && videoRef.current.srcObject) {
-            const localStream = videoRef.current.srcObject as MediaStream;
-            localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
-          }
+              if (localStreamRef.current) {
+                localStreamRef.current.getTracks().forEach((track) => {
+                  pc.addTrack(track, localStreamRef.current!);
+                });
+              }
 
-          pc.onicecandidate = (event) => {
-            if (event.candidate) {
-              channel.send({
-                type: "broadcast",
-                event: "signal",
-                payload: { type: "ice", target: payload.sender, sender: currentUsername, candidate: event.candidate }
+              pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                  supabase.from("stream_signals").insert({
+                    room_username: selectedStreamer,
+                    sender: currentUsername,
+                    target: viewerUsername,
+                    type: "ice",
+                    payload: event.candidate,
+                  });
+                }
+              };
+
+              await pc.setRemoteDescription(new RTCSessionDescription(signal.payload));
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
+
+              await supabase.from("stream_signals").insert({
+                room_username: selectedStreamer,
+                sender: currentUsername,
+                target: viewerUsername,
+                type: "answer",
+                payload: pc.localDescription,
               });
+            } else if (signal.type === "ice") {
+              const pc = peerConnectionsRef.current.get(signal.sender);
+              if (pc) {
+                try {
+                  await pc.addIceCandidate(new RTCIceCandidate(signal.payload));
+                } catch (e) {
+                  console.error("Error adding host ICE candidate:", e);
+                }
+              }
             }
-          };
+          } else {
+            // VIEWER handling incoming host answer
+            const pc = peerConnectionsRef.current.get(selectedStreamer);
+            if (!pc) return;
 
-          await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-
-          channel.send({
-            type: "broadcast",
-            event: "signal",
-            payload: { type: "answer", target: payload.sender, sender: currentUsername, sdp: pc.localDescription }
-          });
-        } else if (payload.type === "ice" && payload.target === currentUsername) {
-          if (pcRef.current) {
-            try {
-              await pcRef.current.addIceCandidate(new RTCIceCandidate(payload.candidate));
-            } catch (e) {
-              console.error("Error adding ice candidate", e);
+            if (signal.type === "answer") {
+              await pc.setRemoteDescription(new RTCSessionDescription(signal.payload));
+            } else if (signal.type === "ice") {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(signal.payload));
+              } catch (e) {
+                console.error("Error adding viewer ICE candidate:", e);
+              }
             }
           }
         }
-      });
+      )
+      .subscribe();
 
-      channel.subscribe();
-    } else if (selectedStreamer !== currentUsername) {
-      // VIEWER LOGIC: Connects to host stream
-      const pc = new RTCPeerConnection(configuration);
-      pcRef.current = pc;
+    // If Viewer, initiate connection to Host
+    if (!isHost) {
+      const pc = new RTCPeerConnection(iceServers);
+      peerConnectionsRef.current.set(selectedStreamer, pc);
 
       pc.ontrack = (event) => {
         if (videoRef.current) {
@@ -186,45 +215,32 @@ export default function StreamingPage() {
 
       pc.onicecandidate = (event) => {
         if (event.candidate) {
-          channel.send({
-            type: "broadcast",
-            event: "signal",
-            payload: { type: "ice", target: selectedStreamer, sender: currentUsername, candidate: event.candidate }
+          supabase.from("stream_signals").insert({
+            room_username: selectedStreamer,
+            sender: currentUsername,
+            target: selectedStreamer,
+            type: "ice",
+            payload: event.candidate,
           });
         }
       };
 
-      channel.on("broadcast", { event: "signal" }, async ({ payload }) => {
-        if (payload.type === "answer" && payload.target === currentUsername) {
-          await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
-        } else if (payload.type === "ice" && payload.target === currentUsername) {
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
-          } catch (e) {
-            console.error("Error adding ice candidate", e);
-          }
-        }
-      });
-
-      channel.subscribe(async (status) => {
-        if (status === "SUBSCRIBED") {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          channel.send({
-            type: "broadcast",
-            event: "signal",
-            payload: { type: "offer", target: selectedStreamer, sender: currentUsername, sdp: pc.localDescription }
-          });
-        }
+      pc.createOffer().then(async (offer) => {
+        await pc.setLocalDescription(offer);
+        await supabase.from("stream_signals").insert({
+          room_username: selectedStreamer,
+          sender: currentUsername,
+          target: selectedStreamer,
+          type: "offer",
+          payload: pc.localDescription,
+        });
       });
     }
 
     return () => {
-      if (pcRef.current) {
-        pcRef.current.close();
-        pcRef.current = null;
-      }
-      supabase.removeChannel(channel);
+      peerConnectionsRef.current.forEach((pc) => pc.close());
+      peerConnectionsRef.current.clear();
+      supabase.removeChannel(signalChannel);
     };
   }, [selectedStreamer, currentUsername, isStreaming, supabase]);
 
@@ -237,7 +253,6 @@ export default function StreamingPage() {
       .eq("is_active", true);
   };
 
-  // Request browser full screen mode
   const enterFullScreen = () => {
     const elem = document.documentElement as any;
     if (elem.requestFullscreen) {
@@ -256,7 +271,7 @@ export default function StreamingPage() {
     }
   };
 
-  // Toggle Live Streaming & Connect Camera
+  // Toggle Live Streaming & Connect Camera for Host
   const toggleLive = async () => {
     if (!isApproved) {
       alert("Live streaming is only available to approved members.");
@@ -268,8 +283,9 @@ export default function StreamingPage() {
         enterFullScreen();
         await closeUserActiveStreams(currentUsername);
 
-        // Wipe old chat history for a completely fresh session
+        // Wipe old chat & signals
         await supabase.from("stream_messages").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        await supabase.from("stream_signals").delete().eq("room_username", currentUsername);
         setMessages([]);
 
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -277,8 +293,10 @@ export default function StreamingPage() {
           audio: true,
         });
 
+        localStreamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          videoRef.current.muted = true; // Host mutes local playback to prevent audio echo
         }
         setIsStreaming(true);
         setSelectedStreamer(currentUsername);
@@ -298,12 +316,14 @@ export default function StreamingPage() {
         }
       } catch (err) {
         console.error("Camera access failed:", err);
-        alert("Could not access camera or microphone. Please ensure camera permissions are allowed.");
+        alert("Could not access camera or microphone. Please check permissions.");
       }
     } else {
-      if (videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach((track) => track.stop());
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+        localStreamRef.current = null;
+      }
+      if (videoRef.current) {
         videoRef.current.srcObject = null;
       }
       setIsStreaming(false);
@@ -316,17 +336,20 @@ export default function StreamingPage() {
         setStreamId(null);
       }
       await closeUserActiveStreams(currentUsername);
+      await supabase.from("stream_signals").delete().eq("room_username", currentUsername);
       exitFullScreen();
     }
     fetchActiveStreams();
   };
 
-  // Exit stream room / end streaming and return to lobby
+  // Exit stream room / end streaming
   const handleExitStream = async () => {
     if (isStreaming) {
-      if (videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach((track) => track.stop());
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+        localStreamRef.current = null;
+      }
+      if (videoRef.current) {
         videoRef.current.srcObject = null;
       }
       setIsStreaming(false);
@@ -338,18 +361,18 @@ export default function StreamingPage() {
         setStreamId(null);
       }
       await closeUserActiveStreams(currentUsername);
+      await supabase.from("stream_signals").delete().eq("room_username", currentUsername);
       fetchActiveStreams();
     }
     exitFullScreen();
     setSelectedStreamer(null);
   };
 
-  // Cleanup camera on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach((track) => track.stop());
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
       }
     };
   }, []);
@@ -391,7 +414,7 @@ export default function StreamingPage() {
     };
   }, [supabase]);
 
-  // Realtime Presence for Viewers (Excluding the Host from the viewers list)
+  // Realtime Presence for Viewers
   useEffect(() => {
     if (!currentUsername || currentUsername === "Guest" || !selectedStreamer) return;
 
@@ -405,7 +428,6 @@ export default function StreamingPage() {
         const activeViewers: Viewer[] = [];
         Object.values(state).forEach((presences: any) => {
           presences.forEach((p: any) => {
-            // Exclude the streamer themselves from showing as an active viewer of their own stream
             if (p.username && p.username !== selectedStreamer) {
               activeViewers.push({ username: p.username, photo_url: p.photo_url });
             }
@@ -537,7 +559,7 @@ export default function StreamingPage() {
   }
 
   // ==========================================
-  // STATE 2: ACTIVE STREAM ROOM VIEW (Immersive Full Screen, Mirror Flipped, Contain Zoom)
+  // STATE 2: ACTIVE STREAM ROOM VIEW (Immersive Full Screen, Mirror Flipped, Self-Visible)
   // ==========================================
   return (
     <div className="fixed inset-0 z-[99999] bg-white w-screen h-screen flex flex-col items-center justify-center overflow-hidden p-0 m-0">
