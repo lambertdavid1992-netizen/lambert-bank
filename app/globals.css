@@ -64,3 +64,8 @@ select option {
     print-color-adjust: exact !important;
   }
 }
+
+/* Hide the Next.js dev indicator badge/portal */
+nextjs-portal {
+  display: none !important;
+}

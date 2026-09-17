@@ -80,7 +80,7 @@ export default function StreamingPage() {
     loadUser();
   }, [supabase]);
 
-  // Fetch active streams from database
+  // Fetch strictly active streams from database (no dummy fallbacks)
   const fetchActiveStreams = useCallback(async () => {
     const { data, error } = await supabase
       .from("streams")
@@ -88,11 +88,13 @@ export default function StreamingPage() {
       .eq("is_active", true);
 
     if (!error && data) {
-      const hasKingDavid = data.some((s) => s.host_username === "KingDavid");
-      const list = hasKingDavid ? data : [{ id: "default-kingdavid", host_username: "KingDavid", title: "Official Community Stream", is_active: true }, ...data];
-      setActiveStreams(list);
+      const uniqueStreamsMap = new Map<string, StreamRecord>();
+      data.forEach((s) => {
+        uniqueStreamsMap.set(s.host_username, s);
+      });
+      setActiveStreams(Array.from(uniqueStreamsMap.values()));
     } else {
-      setActiveStreams([{ id: "default-kingdavid", host_username: "KingDavid", title: "Official Community Stream", is_active: true }]);
+      setActiveStreams([]);
     }
   }, [supabase]);
 
@@ -116,6 +118,15 @@ export default function StreamingPage() {
     };
   }, [supabase, fetchActiveStreams]);
 
+  // Helper to terminate active streams for this user in DB
+  const closeUserActiveStreams = async (username: string) => {
+    await supabase
+      .from("streams")
+      .update({ is_active: false })
+      .eq("host_username", username)
+      .eq("is_active", true);
+  };
+
   // Toggle Live Streaming & Switch to Own Broadcast Room
   const toggleLive = async () => {
     if (!isApproved) {
@@ -125,6 +136,8 @@ export default function StreamingPage() {
 
     if (!isStreaming) {
       try {
+        await closeUserActiveStreams(currentUsername);
+
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -164,6 +177,7 @@ export default function StreamingPage() {
           .eq("id", streamId);
         setStreamId(null);
       }
+      await closeUserActiveStreams(currentUsername);
     }
     fetchActiveStreams();
   };
@@ -184,12 +198,13 @@ export default function StreamingPage() {
           .eq("id", streamId);
         setStreamId(null);
       }
+      await closeUserActiveStreams(currentUsername);
       fetchActiveStreams();
     }
     setSelectedStreamer(null);
   };
 
-  // Cleanup camera on unmount
+  // Cleanup camera & close stream on unmount or tab close
   useEffect(() => {
     return () => {
       if (videoRef.current && videoRef.current.srcObject) {
@@ -338,7 +353,7 @@ export default function StreamingPage() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
           {activeStreams.length === 0 ? (
-            <div className="col-span-full py-16 text-center text-xs text-gray-400">
+            <div className="col-span-full py-16 text-center text-xs text-gray-400 bg-white rounded-xl border border-gray-200">
               No active live streams right now. Check back soon!
             </div>
           ) : (
@@ -375,12 +390,10 @@ export default function StreamingPage() {
   }
 
   // ==========================================
-  // STATE 2: ACTIVE STREAM ROOM VIEW (Permanent White Background + Vertical Phone Shape)
+  // STATE 2: ACTIVE STREAM ROOM VIEW
   // ==========================================
   return (
     <div className="fixed inset-0 z-50 bg-white flex flex-col items-center justify-center overflow-hidden p-0 md:p-4">
-      
-      {/* Stream Container: Always vertical phone shape with white background framing on computers */}
       <div className="relative bg-black w-full h-full md:w-auto md:h-[86vh] md:max-h-[86vh] md:aspect-[9/16] md:rounded-3xl md:border-4 md:border-zinc-800 md:overflow-hidden md:shadow-2xl flex flex-col justify-end group">
         
         <video
@@ -403,7 +416,7 @@ export default function StreamingPage() {
           </div>
         ) : null}
 
-        {/* Top-Left Controls: Go Live Button & Viewers Count */}
+        {/* Top-Left Controls */}
         <div className="absolute top-4 left-4 flex items-center gap-1.5 z-30">
           {isApproved ? (
             <button
@@ -433,7 +446,7 @@ export default function StreamingPage() {
           </button>
         </div>
 
-        {/* Top-Right Controls: Donate ($), @Username, and X Exit Button INSIDE the Phone Screen */}
+        {/* Top-Right Controls */}
         <div className="absolute top-4 right-4 z-30 flex items-center gap-2">
           {balanceCents > 0 && selectedStreamer !== currentUsername && (
             <button
