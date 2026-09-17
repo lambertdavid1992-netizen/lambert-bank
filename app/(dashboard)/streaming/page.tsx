@@ -52,6 +52,7 @@ export default function StreamingPage() {
   const [messages, setMessages] = useState<StreamChatMessage[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Load user details
   useEffect(() => {
@@ -127,7 +128,28 @@ export default function StreamingPage() {
       .eq("is_active", true);
   };
 
-  // Toggle Live Streaming & Connect Camera (Wipes old chat history for a completely fresh session)
+  // Request browser full screen mode for true TikTok-like immersive view
+  const enterFullScreen = () => {
+    const elem = document.documentElement as any;
+    if (elem.requestFullscreen) {
+      elem.requestFullscreen().catch(() => {});
+    } else if (elem.webkitRequestFullscreen) {
+      elem.webkitRequestFullscreen();
+    } else if (elem.msRequestFullscreen) {
+      elem.msRequestFullscreen();
+    }
+  };
+
+  const exitFullScreen = () => {
+    const doc = document as any;
+    if (doc.exitFullscreen && document.fullscreenElement) {
+      doc.exitFullscreen().catch(() => {});
+    } else if (doc.webkitExitFullscreen && doc.webkitFullscreenElement) {
+      doc.webkitExitFullscreen();
+    }
+  };
+
+  // Toggle Live Streaming & Connect Mobile/Desktop Camera
   const toggleLive = async () => {
     if (!isApproved) {
       alert("Live streaming is only available to approved members.");
@@ -136,21 +158,25 @@ export default function StreamingPage() {
 
     if (!isStreaming) {
       try {
-        // 1. Terminate any previous active streams
+        enterFullScreen();
         await closeUserActiveStreams(currentUsername);
 
-        // 2. Wipe all previous chat history so this live stream starts completely fresh
+        // Wipe old chat history for a completely fresh session
         await supabase.from("stream_messages").delete().neq("id", "00000000-0000-0000-0000-000000000000");
         setMessages([]);
 
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        // Request front camera access for mobile & desktop
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 1080 }, height: { ideal: 1920 } },
+          audio: true,
+        });
+
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
         setIsStreaming(true);
         setSelectedStreamer(currentUsername);
 
-        // 3. Insert new single active stream record
         const { data, error } = await supabase
           .from("streams")
           .insert({
@@ -166,7 +192,7 @@ export default function StreamingPage() {
         }
       } catch (err) {
         console.error("Camera access failed:", err);
-        alert("Could not access camera or microphone.");
+        alert("Could not access camera or microphone. Please ensure camera permissions are allowed in your browser settings.");
       }
     } else {
       if (videoRef.current && videoRef.current.srcObject) {
@@ -184,6 +210,7 @@ export default function StreamingPage() {
         setStreamId(null);
       }
       await closeUserActiveStreams(currentUsername);
+      exitFullScreen();
     }
     fetchActiveStreams();
   };
@@ -207,6 +234,7 @@ export default function StreamingPage() {
       await closeUserActiveStreams(currentUsername);
       fetchActiveStreams();
     }
+    exitFullScreen();
     setSelectedStreamer(null);
   };
 
@@ -220,7 +248,6 @@ export default function StreamingPage() {
     };
   }, []);
 
-  // When joining a room as a viewer, load current stream messages fresh
   const fetchStreamMessages = useCallback(async () => {
     const { data, error } = await supabase
       .from("stream_messages")
@@ -368,7 +395,8 @@ export default function StreamingPage() {
             activeStreams.map((stream) => (
               <div
                 key={stream.id}
-                onClick={async () => {
+                onClick={() => {
+                  enterFullScreen();
                   setSelectedStreamer(stream.host_username);
                 }}
                 className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm hover:border-[#e7b833] hover:shadow-md transition cursor-pointer flex flex-col items-center text-center group"
@@ -400,11 +428,13 @@ export default function StreamingPage() {
   }
 
   // ==========================================
-  // STATE 2: ACTIVE STREAM ROOM VIEW
+  // STATE 2: ACTIVE STREAM ROOM VIEW (True Full-Screen Over-take, Zero Browser Chrome)
   // ==========================================
   return (
-    <div className="fixed inset-0 z-[999] bg-white flex flex-col items-center justify-center overflow-hidden p-0 md:p-4">
-      <div className="relative bg-black w-full h-full md:w-auto md:h-[86vh] md:max-h-[86vh] md:aspect-[9/16] md:rounded-3xl md:border-4 md:border-zinc-800 md:overflow-hidden md:shadow-2xl flex flex-col justify-end group">
+    <div ref={containerRef} className="fixed inset-0 z-[99999] bg-white w-screen h-screen flex flex-col items-center justify-center overflow-hidden p-0 m-0">
+      
+      {/* Stream Container: True edge-to-edge full screen on mobile, phone-framed box on desktop */}
+      <div className="relative bg-black w-full h-full md:w-auto md:h-screen md:max-h-screen md:aspect-[9/16] md:rounded-none md:border-0 md:overflow-hidden flex flex-col justify-end group">
         
         <video
           ref={videoRef}
@@ -470,7 +500,7 @@ export default function StreamingPage() {
         </div>
 
         {/* Bottom Overlay: Chat Feed & Input */}
-        <div className="relative z-30 bg-gradient-to-t from-black/95 via-zinc-950/80 to-transparent pt-8 pb-4 px-4 w-full flex flex-col justify-end max-h-[40%]">
+        <div className="relative z-30 bg-gradient-to-t from-black/95 via-zinc-950/80 to-transparent pt-8 pb-6 px-4 w-full flex flex-col justify-end max-h-[40%]">
           <div className="overflow-y-auto space-y-1.5 mb-2 max-h-32 pr-1 text-xs [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-600 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
             {messages.length === 0 ? (
               <div className="text-center text-[10px] text-zinc-400 py-1">No comments yet. Say something!</div>
