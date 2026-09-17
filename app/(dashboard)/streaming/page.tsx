@@ -54,6 +54,7 @@ export default function StreamingPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const pendingCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
 
   // Load user details
   useEffect(() => {
@@ -131,7 +132,7 @@ export default function StreamingPage() {
     };
   }, [supabase, fetchActiveStreams]);
 
-  // WebRTC P2P Signaling via Supabase Broadcast Channels (Fixed Multi-Peer Routing)
+  // WebRTC P2P Signaling with Robust ICE Buffering & Race-Condition Fixes
   useEffect(() => {
     if (!selectedStreamer || !currentUsername || currentUsername === "Guest") return;
 
@@ -140,6 +141,8 @@ export default function StreamingPage() {
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" }
+        // Add your free TURN server here when needed:
+        // { urls: "turn:your-turn-server.com", username: "...", credential: "..." }
       ]
     };
 
@@ -147,23 +150,37 @@ export default function StreamingPage() {
       config: { broadcast: { self: false } }
     });
 
+    const addBufferedCandidates = async (pc: RTCPeerConnection, peerKey: string) => {
+      const candidates = pendingCandidatesRef.current.get(peerKey);
+      if (candidates && candidates.length > 0) {
+        for (const candidate of candidates) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          } catch (e) {
+            console.error("Buffered ICE error:", e);
+          }
+        }
+        pendingCandidatesRef.current.set(peerKey, []);
+      }
+    };
+
     roomChannel
       .on("broadcast", { event: "webrtc-signal" }, async ({ payload }) => {
         if (payload.target !== currentUsername) return;
 
-        console.log("Received WebRTC signal:", payload.type, "from:", payload.sender);
+        const { type, sender, payload: signal } = payload;
+        console.log("Signal received:", type, "from:", sender);
 
         if (isHost) {
-          const viewerUsername = payload.sender;
-          let pc = peerConnectionsRef.current.get(viewerUsername);
+          let pc = peerConnectionsRef.current.get(sender);
 
-          if (payload.type === "offer") {
+          if (type === "offer") {
             if (!pc) {
               pc = new RTCPeerConnection(iceServers);
-              peerConnectionsRef.current.set(viewerUsername, pc);
+              peerConnectionsRef.current.set(sender, pc);
 
               pc.onconnectionstatechange = () => {
-                console.log(`Host -> Viewer (${viewerUsername}) connection state:`, pc?.connectionState);
+                console.log(`Host -> Viewer (${sender}) state:`, pc?.connectionState);
                 if (pc?.connectionState === "connected") {
                   setConnectionStatus("Live");
                 }
@@ -180,39 +197,54 @@ export default function StreamingPage() {
                   roomChannel.send({
                     type: "broadcast",
                     event: "webrtc-signal",
-                    payload: { type: "ice", sender: currentUsername, target: viewerUsername, payload: event.candidate }
+                    payload: { type: "ice", sender: currentUsername, target: sender, payload: event.candidate }
                   });
                 }
               };
             }
 
-            await pc.setRemoteDescription(new RTCSessionDescription(payload.payload));
+            await pc.setRemoteDescription(new RTCSessionDescription(signal));
+            await addBufferedCandidates(pc, sender);
+
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
 
             roomChannel.send({
               type: "broadcast",
               event: "webrtc-signal",
-              payload: { type: "answer", sender: currentUsername, target: viewerUsername, payload: pc.localDescription }
+              payload: { type: "answer", sender: currentUsername, target: sender, payload: pc.localDescription }
             });
-          } else if (payload.type === "ice" && pc) {
-            try {
-              await pc.addIceCandidate(new RTCIceCandidate(payload.payload));
-            } catch (e) {
-              console.error("Host ICE error:", e);
+          } else if (type === "ice") {
+            if (pc && pc.remoteDescription) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(signal));
+              } catch (e) {
+                console.error("Host ICE error:", e);
+              }
+            } else {
+              const queue = pendingCandidatesRef.current.get(sender) || [];
+              queue.push(signal);
+              pendingCandidatesRef.current.set(sender, queue);
             }
           }
         } else {
           const pc = peerConnectionsRef.current.get(selectedStreamer);
           if (!pc) return;
 
-          if (payload.type === "answer") {
-            await pc.setRemoteDescription(new RTCSessionDescription(payload.payload));
-          } else if (payload.type === "ice") {
-            try {
-              await pc.addIceCandidate(new RTCIceCandidate(payload.payload));
-            } catch (e) {
-              console.error("Viewer ICE error:", e);
+          if (type === "answer") {
+            await pc.setRemoteDescription(new RTCSessionDescription(signal));
+            await addBufferedCandidates(pc, selectedStreamer);
+          } else if (type === "ice") {
+            if (pc.remoteDescription) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(signal));
+              } catch (e) {
+                console.error("Viewer ICE error:", e);
+              }
+            } else {
+              const queue = pendingCandidatesRef.current.get(selectedStreamer) || [];
+              queue.push(signal);
+              pendingCandidatesRef.current.set(selectedStreamer, queue);
             }
           }
         }
@@ -220,6 +252,9 @@ export default function StreamingPage() {
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED" && !isHost) {
           setConnectionStatus("Connecting to stream...");
+          const oldPc = peerConnectionsRef.current.get(selectedStreamer);
+          if (oldPc) oldPc.close();
+
           const pc = new RTCPeerConnection(iceServers);
           peerConnectionsRef.current.set(selectedStreamer, pc);
 
@@ -232,17 +267,13 @@ export default function StreamingPage() {
             }
           };
 
-          pc.ontrack = async (event) => {
+          pc.ontrack = (event) => {
             console.log("Viewer received remote track!", event.streams[0]);
             if (videoRef.current) {
               videoRef.current.srcObject = event.streams[0];
               videoRef.current.muted = false;
-              try {
-                await videoRef.current.play();
-                setConnectionStatus("Live");
-              } catch (err) {
-                console.error("Autoplay error:", err);
-              }
+              videoRef.current.play().catch(console.error);
+              setConnectionStatus("Live");
             }
           };
 
@@ -256,19 +287,25 @@ export default function StreamingPage() {
             }
           };
 
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          roomChannel.send({
-            type: "broadcast",
-            event: "webrtc-signal",
-            payload: { type: "offer", sender: currentUsername, target: selectedStreamer, payload: pc.localDescription }
-          });
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            roomChannel.send({
+              type: "broadcast",
+              event: "webrtc-signal",
+              payload: { type: "offer", sender: currentUsername, target: selectedStreamer, payload: pc.localDescription }
+            });
+          } catch (err) {
+            console.error("Failed to create offer:", err);
+            setConnectionStatus("Failed to connect");
+          }
         }
       });
 
     return () => {
       peerConnectionsRef.current.forEach((pc) => pc.close());
       peerConnectionsRef.current.clear();
+      pendingCandidatesRef.current.clear();
       supabase.removeChannel(roomChannel);
     };
   }, [selectedStreamer, currentUsername, isStreaming, supabase]);
