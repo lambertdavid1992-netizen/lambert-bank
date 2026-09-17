@@ -80,7 +80,7 @@ export default function StreamingPage() {
     loadUser();
   }, [supabase]);
 
-  // Fetch strictly active streams from database (no dummy fallbacks)
+  // Fetch strictly active streams from database
   const fetchActiveStreams = useCallback(async () => {
     const { data, error } = await supabase
       .from("streams")
@@ -127,7 +127,7 @@ export default function StreamingPage() {
       .eq("is_active", true);
   };
 
-  // Toggle Live Streaming & Switch to Own Broadcast Room
+  // Toggle Live Streaming & Connect Camera (Wipes old chat history for a completely fresh session)
   const toggleLive = async () => {
     if (!isApproved) {
       alert("Live streaming is only available to approved members.");
@@ -136,7 +136,12 @@ export default function StreamingPage() {
 
     if (!isStreaming) {
       try {
+        // 1. Terminate any previous active streams
         await closeUserActiveStreams(currentUsername);
+
+        // 2. Wipe all previous chat history so this live stream starts completely fresh
+        await supabase.from("stream_messages").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        setMessages([]);
 
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         if (videoRef.current) {
@@ -145,6 +150,7 @@ export default function StreamingPage() {
         setIsStreaming(true);
         setSelectedStreamer(currentUsername);
 
+        // 3. Insert new single active stream record
         const { data, error } = await supabase
           .from("streams")
           .insert({
@@ -204,7 +210,7 @@ export default function StreamingPage() {
     setSelectedStreamer(null);
   };
 
-  // Cleanup camera & close stream on unmount or tab close
+  // Cleanup camera on unmount
   useEffect(() => {
     return () => {
       if (videoRef.current && videoRef.current.srcObject) {
@@ -214,7 +220,7 @@ export default function StreamingPage() {
     };
   }, []);
 
-  // Fetch initial chat messages
+  // When joining a room as a viewer, load current stream messages fresh
   const fetchStreamMessages = useCallback(async () => {
     const { data, error } = await supabase
       .from("stream_messages")
@@ -228,8 +234,10 @@ export default function StreamingPage() {
   }, [supabase]);
 
   useEffect(() => {
-    fetchStreamMessages();
-  }, [fetchStreamMessages]);
+    if (selectedStreamer) {
+      fetchStreamMessages();
+    }
+  }, [selectedStreamer, fetchStreamMessages]);
 
   // Realtime chat comments
   useEffect(() => {
@@ -360,7 +368,9 @@ export default function StreamingPage() {
             activeStreams.map((stream) => (
               <div
                 key={stream.id}
-                onClick={() => setSelectedStreamer(stream.host_username)}
+                onClick={async () => {
+                  setSelectedStreamer(stream.host_username);
+                }}
                 className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm hover:border-[#e7b833] hover:shadow-md transition cursor-pointer flex flex-col items-center text-center group"
               >
                 <div className="relative w-16 h-16 rounded-full bg-gray-900 text-white font-black flex items-center justify-center text-xl border-2 border-amber-400 mb-3 shadow-sm group-hover:scale-105 transition">
@@ -393,7 +403,7 @@ export default function StreamingPage() {
   // STATE 2: ACTIVE STREAM ROOM VIEW
   // ==========================================
   return (
-    <div className="fixed inset-0 z-50 bg-white flex flex-col items-center justify-center overflow-hidden p-0 md:p-4">
+    <div className="fixed inset-0 z-[999] bg-white flex flex-col items-center justify-center overflow-hidden p-0 md:p-4">
       <div className="relative bg-black w-full h-full md:w-auto md:h-[86vh] md:max-h-[86vh] md:aspect-[9/16] md:rounded-3xl md:border-4 md:border-zinc-800 md:overflow-hidden md:shadow-2xl flex flex-col justify-end group">
         
         <video
@@ -401,20 +411,8 @@ export default function StreamingPage() {
           autoPlay
           playsInline
           muted={selectedStreamer === currentUsername}
-          className={`absolute inset-0 w-full h-full object-cover ${selectedStreamer === currentUsername && isStreaming ? "block" : "hidden"}`}
+          className="absolute inset-0 w-full h-full object-cover"
         />
-
-        {selectedStreamer !== currentUsername || !isStreaming ? (
-          <div className="absolute inset-0 bg-gradient-to-tr from-zinc-950 via-zinc-900 to-black flex flex-col items-center justify-center p-6 text-center z-10 pointer-events-none">
-            <div className="w-14 h-14 rounded-full bg-amber-500/10 border border-[#e7b833]/30 flex items-center justify-center mb-2 text-[#e7b833] animate-pulse">
-              <svg className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9.348 14.652a3.75 3.75 0 0 1 0-5.304m5.304 0a3.75 3.75 0 0 1 0 5.304m-7.425 2.121a6.75 6.75 0 0 1 0-9.546m9.546 0a6.75 6.75 0 0 1 0 9.546M12 12.75h.008v.008H12v-.008Z" />
-              </svg>
-            </div>
-            <h3 className="text-xs font-bold text-white tracking-wide">@{selectedStreamer}&apos;s Live Broadcast</h3>
-            <p className="text-[9px] text-zinc-400 mt-0.5">&quot;Spending time, together.&quot;</p>
-          </div>
-        ) : null}
 
         {/* Top-Left Controls */}
         <div className="absolute top-4 left-4 flex items-center gap-1.5 z-30">
