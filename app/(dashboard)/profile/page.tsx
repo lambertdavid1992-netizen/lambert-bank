@@ -73,7 +73,6 @@ function ProfileContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const profileParam = searchParams.get("username");
-
   const supabase = createBrowserClient(
     "https://bucijzexpxsuxvsnwwyu.supabase.co",
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1Y2lqemV4cHhzdXh2c253d3l1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5MzM2NjAsImV4cCI6MjEwNDUwOTY2MH0.Gr34yXf6UDlZq54nEKZAvaUCnfXla26LoVSH3YY5u1M"
@@ -152,7 +151,6 @@ function ProfileContent() {
 
       if (postsData) {
         const postIds = postsData.map((p) => p.id);
-
         const { data: likesData } = await supabase
           .from("post_likes")
           .select("post_id, username, reaction_type")
@@ -165,7 +163,6 @@ function ProfileContent() {
           .order("created_at", { ascending: false });
 
         const commentIds = commentsData?.map((c) => c.id) || [];
-
         const { data: commentLikesData } = await supabase
           .from("comment_likes")
           .select("comment_id, username, reaction_type")
@@ -174,7 +171,6 @@ function ProfileContent() {
         const formatted: Post[] = postsData.map((post) => {
           const postLikes: LikeRecord[] = likesData?.filter((l) => l.post_id === post.id) || [];
           const rawComments: CommentRecord[] = commentsData?.filter((c) => c.post_id === post.id) || [];
-
           const postComments = rawComments.map((comment) => {
             const commentLikes = commentLikesData?.filter((cl) => cl.comment_id === comment.id) || [];
             const userCommentLike = commentLikes.find(
@@ -248,6 +244,7 @@ function ProfileContent() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
+
       if (!session) {
         router.push("/login");
         return;
@@ -265,6 +262,7 @@ function ProfileContent() {
           .select("*")
           .eq("user_id", session.user.id)
           .single();
+
         if (userProf) {
           loggedInUsername = userProf.username;
           setCurrentUserProfile(userProf);
@@ -272,7 +270,6 @@ function ProfileContent() {
       }
 
       setCurrentUsername(loggedInUsername);
-
       const targetProfileUser = profileParam ? profileParam.trim() : loggedInUsername;
 
       const { data: profileData } = await supabase
@@ -366,7 +363,6 @@ function ProfileContent() {
   const isOwnProfile = currentUsername.toLowerCase() === profile?.username?.toLowerCase();
   const isFemale = profile?.gender?.toLowerCase() === "female";
   const isViewerApproved = Boolean(currentUserProfile?.is_approved);
-
   const hasOwnerPosted = posts.some((p) => p.username.toLowerCase() === profile.username.toLowerCase());
   const canPost = isOwnProfile || hasOwnerPosted;
 
@@ -436,7 +432,6 @@ function ProfileContent() {
     if (!files || files.length === 0) return;
     const file = files[0];
 
-    // Restrict uploads strictly to own account
     if (!isOwnProfile) {
       alert("You can only upload pictures to your own gallery.");
       e.target.value = "";
@@ -513,7 +508,6 @@ function ProfileContent() {
         if (storagePath) {
           await supabase.storage.from("gallery").remove([storagePath]);
         }
-
         const { error } = await supabase.from("profile_gallery").delete().eq("id", img.id);
         if (error) {
           alert("Failed to delete image: " + error.message);
@@ -543,11 +537,13 @@ function ProfileContent() {
 
   const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
+
     if (!isViewerApproved) {
       setWarningMessage("Your account is pending approval by King David. Posting thoughts is currently locked.");
       setWarningModalOpen(true);
       return;
     }
+
     if ((!newPostContent.trim() && !newPostImageFile) || !currentUsername || !profile?.username) return;
 
     setPosting(true);
@@ -608,7 +604,6 @@ function ProfileContent() {
             await supabase.storage.from("gallery").remove([storagePath]);
           }
         }
-
         const { error } = await supabase.from("posts").delete().eq("id", post.id);
         if (error) {
           alert("Failed to delete post: " + error.message);
@@ -623,11 +618,13 @@ function ProfileContent() {
 
   const handleAddComment = async (postId: string, e: React.FormEvent) => {
     e.preventDefault();
+
     if (!isViewerApproved) {
       setWarningMessage("Your account is pending approval by King David. Replying to thoughts is currently locked.");
       setWarningModalOpen(true);
       return;
     }
+
     const commentText = commentInputs[postId];
     if (!commentText?.trim() || !currentUsername) return;
 
@@ -671,6 +668,7 @@ function ProfileContent() {
       setWarningModalOpen(true);
       return;
     }
+
     if (!currentUsername || !profile?.username) return;
 
     if (existingReaction === reactionType) {
@@ -687,7 +685,6 @@ function ProfileContent() {
           { onConflict: "post_id,username" }
         );
     }
-
     await fetchPosts(profile.username, currentUsername);
   };
 
@@ -701,6 +698,7 @@ function ProfileContent() {
       setWarningModalOpen(true);
       return;
     }
+
     if (!currentUsername || !profile?.username) return;
 
     if (existingReaction === reactionType) {
@@ -717,7 +715,6 @@ function ProfileContent() {
           { onConflict: "comment_id,username" }
         );
     }
-
     await fetchPosts(profile.username, currentUsername);
   };
 
@@ -731,6 +728,7 @@ function ProfileContent() {
       setWarningModalOpen(true);
       return;
     }
+
     if (!currentUsername || !profile?.username) return;
 
     if (existingReaction === reactionType) {
@@ -747,7 +745,6 @@ function ProfileContent() {
           { onConflict: "gallery_id,username" }
         );
     }
-
     await fetchGallery(profile.username, currentUsername);
   };
 
@@ -808,7 +805,6 @@ function ProfileContent() {
             ) : (
               <span className="text-xs text-gray-400">No Image</span>
             )}
-
             {isOwnProfile && (
               <label
                 className={`absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition flex flex-col items-center justify-center text-white text-[10px] font-bold cursor-pointer p-1 text-center ${
@@ -826,7 +822,6 @@ function ProfileContent() {
               </label>
             )}
           </div>
-
           <div className="space-y-1.5 text-center sm:text-left flex-1">
             <div>
               <span
@@ -837,11 +832,9 @@ function ProfileContent() {
                 {profile?.first_name || "Account"} {profile?.last_name || ""}
               </span>
             </div>
-
             <p className={`text-xs font-mono font-bold ${isFemale ? "text-pink-600" : "text-blue-600"}`}>
               Payment ID: @{profile?.username}
             </p>
-
             <div className="text-[11px] text-gray-600 space-y-0.5 pt-1 font-medium">
               <p>{calculateAge(profile?.dob)}</p>
               <p>
@@ -858,7 +851,6 @@ function ProfileContent() {
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden p-6 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-gray-900">@{profile?.username}&apos;s Gallery</h2>
-
           {isOwnProfile && (
             <label
               className={`px-4 py-1.5 rounded-lg text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow-sm transition cursor-pointer flex items-center gap-2 ${
@@ -897,11 +889,9 @@ function ProfileContent() {
                       alt="Gallery upload"
                       className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
                     />
-
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white font-bold text-xs">
                       🔍 Click to Expand
                     </div>
-
                     {/* OVERLAY AT THE VERY BOTTOM OF THE IMAGE ONLY ON OWN PROFILE */}
                     {isOwnProfile && (
                       <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 via-black/50 to-transparent p-2.5 flex items-center justify-between text-[11px] text-white">
@@ -918,7 +908,6 @@ function ProfileContent() {
                       </div>
                     )}
                   </div>
-
                   {/* GALLERY CARD FOOTER */}
                   <div className="p-3 space-y-2.5">
                     {!isOwnProfile && (
@@ -935,7 +924,6 @@ function ProfileContent() {
                         )}
                       </div>
                     )}
-
                     {/* Gallery Reaction Bar */}
                     <div className="bg-white rounded-full px-3 py-1.5 flex items-center justify-between shadow-2xs border border-gray-200">
                       <div className="flex items-center gap-3">
@@ -979,7 +967,6 @@ function ProfileContent() {
           >
             ✕
           </button>
-
           <div className="relative max-w-full max-h-full flex flex-col items-center justify-center">
             <img
               src={selectedGalleryImage.image_url}
@@ -1003,7 +990,6 @@ function ProfileContent() {
           >
             ✕
           </button>
-
           <div className="relative max-w-full max-h-full flex flex-col items-center justify-center">
             <img
               src={selectedPostImage}
@@ -1032,7 +1018,6 @@ function ProfileContent() {
               }
               className="w-full p-3 text-xs text-gray-900 bg-white border border-gray-300 rounded-lg focus:outline-none focus:border-[#e7b833] resize-none"
             />
-
             {newPostImagePreview && (
               <div className="relative w-28 h-28 rounded-lg overflow-hidden border border-gray-300 bg-black">
                 <img src={newPostImagePreview} alt="Preview" className="w-full h-full object-cover" />
@@ -1048,7 +1033,6 @@ function ProfileContent() {
                 </button>
               </div>
             )}
-
             <div className="flex items-center justify-between pt-1">
               <label className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 shadow-2xs transition cursor-pointer flex items-center gap-1.5">
                 <span>📷 Attach Image (Max 10MB)</span>
@@ -1059,7 +1043,6 @@ function ProfileContent() {
                   className="hidden"
                 />
               </label>
-
               <button
                 type="submit"
                 disabled={posting || (!newPostContent.trim() && !newPostImageFile)}
@@ -1081,8 +1064,6 @@ function ProfileContent() {
             posts.map((post) => {
               const isExpanded = expandedComments[post.id];
               const visibleComments = isExpanded ? post.comments : post.comments.slice(0, 3);
-              const remainingCount = post.comments.length - 3;
-
               return (
                 <div key={post.id} className="bg-white border border-gray-200 rounded-xl p-4 shadow-2xs space-y-3 relative">
                   <div className="flex items-center justify-between">
@@ -1095,7 +1076,6 @@ function ProfileContent() {
                         <span className="text-[10px] text-gray-400 font-mono">{formatTimestamp(post.created_at)}</span>
                       </div>
                     </div>
-
                     {(currentUsername.toLowerCase() === "kingdavid" ||
                       post.username.toLowerCase() === currentUsername.toLowerCase()) && (
                       <button
@@ -1107,13 +1087,11 @@ function ProfileContent() {
                       </button>
                     )}
                   </div>
-
                   {post.content && (
                     <p className="text-xs text-gray-800 whitespace-pre-wrap leading-relaxed px-1">
                       {post.content}
                     </p>
                   )}
-
                   {post.image_url && (
                     <div
                       onClick={() => setSelectedPostImage(post.image_url)}
@@ -1130,7 +1108,6 @@ function ProfileContent() {
                       </div>
                     </div>
                   )}
-
                   {/* Reaction Bar */}
                   <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-xs">
                     <div className="bg-gray-100 rounded-full px-4 py-1.5 flex items-center gap-4 shadow-2xs">
@@ -1154,7 +1131,6 @@ function ProfileContent() {
                         );
                       })}
                     </div>
-
                     {post.userReaction && (
                       <span className="text-gray-500 font-normal ml-3">You Reacted</span>
                     )}
@@ -1174,7 +1150,6 @@ function ProfileContent() {
                                   {formatTimestamp(comment.created_at)}
                                 </span>
                               </div>
-
                               {(currentUsername.toLowerCase() === "kingdavid" ||
                                 comment.username.toLowerCase() === currentUsername.toLowerCase()) && (
                                 <button
@@ -1186,7 +1161,6 @@ function ProfileContent() {
                                 </button>
                               )}
                             </div>
-
                             {/* Comment Reaction Bar */}
                             <div className="flex items-center justify-between text-[11px] pt-1 border-t border-gray-200/60">
                               <div className="bg-white rounded-full px-3 py-1 flex items-center gap-3 shadow-2xs border border-gray-200">
@@ -1212,7 +1186,6 @@ function ProfileContent() {
                                   );
                                 })}
                               </div>
-
                               {comment.userReaction && (
                                 <span className="text-gray-400 text-[10px]">You reacted</span>
                               )}
@@ -1226,28 +1199,34 @@ function ProfileContent() {
                             className="text-[11px] text-blue-600 font-semibold hover:underline cursor-pointer pt-1 block"
                           >
                             {isExpanded
-                              ? "Show fewer comments"
-                              : `View more comments (${remainingCount} more)`}
+                              ? "Show Less Comments"
+                              : `View All ${post.comments.length} Comments`}
                           </button>
                         )}
                       </div>
                     )}
 
-                    {/* Add Comment Form */}
-                    <form onSubmit={(e) => handleAddComment(post.id, e)} className="flex gap-2 pt-1">
+                    {/* Add Comment Input Form */}
+                    <form
+                      onSubmit={(e) => handleAddComment(post.id, e)}
+                      className="flex items-center gap-2 pt-1"
+                    >
                       <input
                         type="text"
                         value={commentInputs[post.id] || ""}
                         onChange={(e) =>
-                          setCommentInputs({ ...commentInputs, [post.id]: e.target.value })
+                          setCommentInputs({
+                            ...commentInputs,
+                            [post.id]: e.target.value,
+                          })
                         }
-                        placeholder="Write a comment..."
-                        className="flex-1 px-3 py-1.5 text-xs bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:border-[#e7b833]"
+                        placeholder="Write a reply..."
+                        className="flex-1 px-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-[#e7b833]"
                       />
                       <button
                         type="submit"
                         disabled={!commentInputs[post.id]?.trim()}
-                        className="px-3 py-1.5 bg-gray-900 hover:bg-gray-800 text-white text-xs font-bold rounded-lg transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="px-3 py-1.5 text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                       >
                         Reply
                       </button>
@@ -1260,75 +1239,52 @@ function ProfileContent() {
         </div>
       </div>
 
-      {/* WARNING MODAL FOR PENDING USERS */}
+      {/* Warning Modal */}
       {warningModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[200]">
-          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-sm overflow-hidden transition-all text-left">
-            <div className="bg-[#000000] text-white p-4 flex justify-between items-center font-bold">
-              <h3 className="text-base font-bold text-white">Account Pending Approval</h3>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-[300] p-4">
+          <div className="bg-white rounded-xl p-6 max-w-sm w-full space-y-4 shadow-xl border border-gray-200">
+            <div className="flex items-center gap-2 text-amber-600 font-bold text-sm">
+              <span>⚠️</span>
+              <span>Account Pending</span>
+            </div>
+            <p className="text-xs text-gray-700 leading-relaxed">{warningMessage}</p>
+            <div className="flex justify-end">
               <button
                 onClick={() => setWarningModalOpen(false)}
-                className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer"
+                className="px-4 py-1.5 text-xs font-bold bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition cursor-pointer"
               >
-                ✕
+                Understand
               </button>
-            </div>
-            <div className="h-1 bg-[#e7b833]" />
-
-            <div className="p-5 space-y-4">
-              <p className="text-xs text-gray-700 font-medium leading-relaxed">{warningMessage}</p>
-
-              <div className="flex justify-end pt-2">
-                <button
-                  type="button"
-                  onClick={() => setWarningModalOpen(false)}
-                  className="w-full py-2 rounded text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
-                >
-                  OK
-                </button>
-              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* UNIFIED CONFIRMATION MODAL MATCHING SIGN OUT DESIGN */}
+      {/* Confirmation Modal */}
       {confirmModal.isOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[250]">
-          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-sm overflow-hidden text-left">
-            <div className="bg-[#000000] text-white p-4 flex justify-between items-center font-bold">
-              <h3 className="text-base font-bold text-white">{confirmModal.title}</h3>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-[300] p-4">
+          <div className="bg-white rounded-xl p-6 max-w-sm w-full space-y-4 shadow-xl border border-gray-200">
+            <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wide">
+              {confirmModal.title}
+            </h3>
+            <p className="text-xs text-gray-700 leading-relaxed">{confirmModal.message}</p>
+            <div className="flex justify-end gap-2">
               <button
-                type="button"
                 onClick={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
-                className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer"
+                className="px-3 py-1.5 text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition cursor-pointer"
               >
-                ✕
+                Cancel
               </button>
-            </div>
-            <div className="h-1 bg-[#e7b833]" />
-            <div className="p-5 space-y-4">
-              <p className="text-xs text-gray-700 font-medium leading-relaxed">{confirmModal.message}</p>
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
-                  className="w-1/2 py-2 rounded text-xs font-semibold border border-gray-300 hover:bg-gray-100 cursor-pointer text-gray-700"
-                >
-                  No
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const action = confirmModal.onConfirm;
-                    setConfirmModal((prev) => ({ ...prev, isOpen: false }));
-                    if (action) await action();
-                  }}
-                  className="w-1/2 py-2 rounded text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow cursor-pointer"
-                >
-                  Yes
-                </button>
-              </div>
+              <button
+                onClick={async () => {
+                  const action = confirmModal.onConfirm;
+                  setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+                  await action();
+                }}
+                className="px-3 py-1.5 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition cursor-pointer"
+              >
+                Confirm
+              </button>
             </div>
           </div>
         </div>
@@ -1337,7 +1293,7 @@ function ProfileContent() {
   );
 }
 
-export default function UserProfilePage() {
+export default function ProfilePage() {
   return (
     <Suspense fallback={<div className="py-20 text-center text-xs font-semibold text-gray-500">Loading Profile...</div>}>
       <ProfileContent />
