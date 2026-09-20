@@ -19,6 +19,13 @@ interface Room {
   fee_cents: number;
 }
 
+interface ConfirmModalState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  onConfirm: () => Promise<void> | void;
+}
+
 const REACTION_EMOJIS = ["❤️", "👍", "😂", "😮", "😢", "🔥"];
 
 export default function ChatHubPage() {
@@ -38,13 +45,21 @@ export default function ChatHubPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Click & Hold / Tap reaction menu state for public chat
+  // Click & Hold / Tap reaction menu state
   const [reactionMenuState, setReactionMenuState] = useState<{
     msgId: string;
     x: number;
     y: number;
   } | null>(null);
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Custom Unified Confirmation Modal State
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+  });
 
   const fetchMessages = useCallback(async (roomId: string) => {
     const { data, error } = await supabase
@@ -58,44 +73,55 @@ export default function ChatHubPage() {
     }
   }, [supabase]);
 
-  const handleClearRoomChat = async () => {
+  const confirmClearRoomChat = () => {
     if (username !== "KingDavid") {
-      return alert("Unauthorized: Only KingDavid (Administrator) can clear room histories.");
+      alert("Unauthorized: Only KingDavid (Administrator) can clear room histories.");
+      return;
     }
-
     if (!currentRoom) return;
 
-    if (confirm(`Are you sure you want to delete ALL messages in "${currentRoom.name}"? This action cannot be undone.`)) {
-      const { error } = await supabase
-        .from("messages")
-        .delete()
-        .eq("room_id", currentRoom.id);
+    setConfirmModal({
+      isOpen: true,
+      title: "Clear Room History",
+      message: `Are you sure you want to permanently delete all messages in "${currentRoom.name}"? This action cannot be undone.`,
+      onConfirm: async () => {
+        const { error } = await supabase
+          .from("messages")
+          .delete()
+          .eq("room_id", currentRoom.id);
 
-      if (error) {
-        alert("Failed to clear chat history: " + error.message);
-      } else {
-        setMessages([]);
-      }
-    }
+        if (error) {
+          alert("Failed to clear chat history: " + error.message);
+        } else {
+          setMessages([]);
+        }
+      },
+    });
   };
 
-  const handleDeleteMessage = async (messageId: string) => {
+  const confirmDeleteMessage = (messageId: string) => {
     if (username !== "KingDavid") {
-      return alert("Unauthorized: Only KingDavid (Administrator) can delete individual messages.");
+      alert("Unauthorized: Only KingDavid (Administrator) can delete messages.");
+      return;
     }
 
-    if (confirm("Delete this message?")) {
-      const { error } = await supabase
-        .from("messages")
-        .delete()
-        .eq("id", messageId);
+    setConfirmModal({
+      isOpen: true,
+      title: "Delete Message Confirmation",
+      message: "Are you sure you want to delete this message?",
+      onConfirm: async () => {
+        const { error } = await supabase
+          .from("messages")
+          .delete()
+          .eq("id", messageId);
 
-      if (error) {
-        alert("Failed to delete message: " + error.message);
-      } else {
-        setMessages((prev) => prev.filter((m) => m.id !== messageId));
-      }
-    }
+        if (error) {
+          alert("Failed to delete message: " + error.message);
+        } else {
+          setMessages((prev) => prev.filter((m) => m.id !== messageId));
+        }
+      },
+    });
   };
 
   useEffect(() => {
@@ -107,7 +133,6 @@ export default function ChatHubPage() {
       }
 
       const email = session.user.email || "";
-
       if (email.toLowerCase() === "lambertdavid1992@gmail.com") {
         setUsername("KingDavid");
         setCurrentUsername("KingDavid");
@@ -129,7 +154,11 @@ export default function ChatHubPage() {
         }
       }
 
-      const { data: roomData } = await supabase.from("rooms").select("*").order("fee_cents", { ascending: true });
+      const { data: roomData } = await supabase
+        .from("rooms")
+        .select("*")
+        .order("fee_cents", { ascending: true });
+
       if (roomData && roomData.length > 0) {
         setRooms(roomData);
         setCurrentRoom(roomData[0]);
@@ -149,8 +178,8 @@ export default function ChatHubPage() {
     const channel = supabase
       .channel(`room-live-${currentRoom.id}`)
       .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages', filter: `room_id=eq.${currentRoom.id}` },
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages", filter: `room_id=eq.${currentRoom.id}` },
         (payload) => {
           setMessages((prev) => {
             if (prev.some((m) => m.id === payload.new.id)) return prev;
@@ -159,15 +188,15 @@ export default function ChatHubPage() {
         }
       )
       .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `room_id=eq.${currentRoom.id}` },
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "messages", filter: `room_id=eq.${currentRoom.id}` },
         (payload) => {
           setMessages((prev) => prev.map((m) => (m.id === payload.new.id ? (payload.new as Message) : m)));
         }
       )
       .on(
-        'postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'messages' },
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "messages" },
         (payload) => {
           setMessages((prev) => prev.filter((m) => m.id !== payload.old.id));
         }
@@ -197,7 +226,7 @@ export default function ChatHubPage() {
     const timeSlice = Date.now().toString().slice(-6);
     const rand = Math.floor(1000 + Math.random() * 9000);
     const txnId = `TXN-CHAT-${timeSlice}-${rand}`;
-    
+
     const now = new Date();
     const datePart = now.toLocaleDateString("en-AU", { day: "2-digit", month: "short", year: "numeric" });
     const timePart = now.toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", hour12: true }).toLowerCase();
@@ -271,7 +300,7 @@ export default function ChatHubPage() {
   if (loading) {
     return (
       <div className="py-20 text-center text-xs font-semibold text-gray-500">
-        Loading Lambert Social...
+        Loading Social Time...
       </div>
     );
   }
@@ -332,7 +361,7 @@ export default function ChatHubPage() {
             {username === "KingDavid" && currentRoom && (
               <button
                 type="button"
-                onClick={handleClearRoomChat}
+                onClick={confirmClearRoomChat}
                 className="text-[11px] bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold px-2.5 py-1 rounded border border-rose-200 transition cursor-pointer"
                 title="Purge all messages in this room"
               >
@@ -352,7 +381,6 @@ export default function ChatHubPage() {
                 const isMe = msg.sender_username === username;
                 const reactionsObj = msg.reactions || {};
 
-                // Aggregate reaction counts (up to 6 distinct places)
                 const counts: Record<string, number> = {};
                 Object.values(reactionsObj).forEach((emoji) => {
                   counts[emoji] = (counts[emoji] || 0) + 1;
@@ -368,7 +396,7 @@ export default function ChatHubPage() {
                       {username === "KingDavid" && (
                         <button
                           type="button"
-                          onClick={() => handleDeleteMessage(msg.id)}
+                          onClick={() => confirmDeleteMessage(msg.id)}
                           className="text-[10px] text-rose-500 hover:text-rose-700 font-bold opacity-0 group-hover:opacity-100 transition cursor-pointer"
                           title="Delete message"
                         >
@@ -387,7 +415,6 @@ export default function ChatHubPage() {
                         {msg.content}
                       </div>
 
-                      {/* Aggregated Reactions Display (Up to 6 places) */}
                       {aggregatedPlaces.length > 0 && (
                         <div className={`absolute -bottom-2.5 flex items-center gap-1 bg-white border border-gray-200 rounded-full px-2 py-0.5 shadow-sm text-[10px] z-10 pointer-events-none ${isMe ? "right-3" : "left-3"}`}>
                           {aggregatedPlaces.map(([emoji, count], idx) => (
@@ -404,7 +431,6 @@ export default function ChatHubPage() {
               })
             )}
 
-            {/* Transparent Full-Screen Backdrop to close reaction menu on outside click */}
             {reactionMenuState && (
               <div 
                 className="fixed inset-0 z-[190]"
@@ -412,7 +438,6 @@ export default function ChatHubPage() {
               />
             )}
 
-            {/* Pinned Click/Touch Reaction Menu positioned exactly where clicked/held */}
             {reactionMenuState && (
               <div
                 style={{
@@ -471,6 +496,48 @@ export default function ChatHubPage() {
           </form>
         </div>
       </div>
+
+      {/* UNIFIED DESTRUCTIVE CONFIRMATION MODAL */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[250]">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-sm overflow-hidden text-left">
+            <div className="bg-[#800000] text-white p-4 flex justify-between items-center font-bold">
+              <h3 className="text-base font-bold text-white">{confirmModal.title}</h3>
+              <button
+                type="button"
+                onClick={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+                className="text-gray-300 hover:text-white text-lg leading-none cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="h-1 bg-[#660000]" />
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-gray-700 font-medium leading-relaxed">{confirmModal.message}</p>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+                  className="w-1/2 py-2 rounded text-xs font-semibold border border-gray-300 hover:bg-gray-100 cursor-pointer text-gray-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const action = confirmModal.onConfirm;
+                    setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+                    if (action) await action();
+                  }}
+                  className="w-1/2 py-2 rounded text-xs font-bold bg-[#800000] hover:bg-[#660000] text-white shadow cursor-pointer"
+                >
+                  Confirm Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

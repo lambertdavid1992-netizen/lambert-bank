@@ -101,7 +101,7 @@ export default function CommBankStyleDashboard() {
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [friendRequestsCount, setFriendRequestsCount] = useState<number>(0);
 
-  // DYNAMIC TIMER, MULTIPLIER & CLAIM LINK
+  // Dynamic Session Timer, Multiplier & Live Total
   const { accumulatedMs: activeSessionMilliseconds, pendingBalanceCents, multiplier, claimPendingBalance, addSessionDays, totalDays } = useSessionTimer();
 
   const [allBadges, setAllBadges] = useState<TimeBadge[]>([]);
@@ -114,6 +114,10 @@ export default function CommBankStyleDashboard() {
   const [completedTxn, setCompletedTxn] = useState<Transaction | null>(null);
 
   const [viewingTxn, setViewingTxn] = useState<Transaction | null>(null);
+
+  // Input refs for native constraint tooltips
+  const recipientInputRef = useRef<HTMLInputElement>(null);
+  const dollarInputRef = useRef<HTMLInputElement>(null);
 
   // Admin Capital Injection Modal State
   const [showAdminModal, setShowAdminModal] = useState<boolean>(false);
@@ -130,7 +134,7 @@ export default function CommBankStyleDashboard() {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const ITEMS_PER_PAGE = 30;
 
-  // Floating money animation state ("floatUp" for pending claim, "top" for admin fund injection)
+  // Floating money animation state
   const [floatingCoins, setFloatingCoins] = useState<{ id: number; text: string; animType: 'floatUp' | 'top' }[]>([]);
 
   const fetchBadgeCounts = useCallback(async () => {
@@ -160,6 +164,7 @@ export default function CommBankStyleDashboard() {
 
   useEffect(() => {
     fetchBadgeCounts();
+
     const interval = setInterval(() => {
       fetchBadgeCounts();
     }, 3000);
@@ -234,7 +239,6 @@ export default function CommBankStyleDashboard() {
         }
 
         setIsApproved(approvedStatus);
-
       } catch (err) {
         console.error("Auth verification failed:", err);
         router.push("/login");
@@ -321,7 +325,7 @@ export default function CommBankStyleDashboard() {
     loadUserData();
   }, [currentUsername, mounted, loadUserData]);
 
-  // Instant local derivation of time ranks using live totalDays to eliminate polling lag
+  // Instant local derivation of time ranks using live totalDays
   useEffect(() => {
     if (allBadges.length === 0) return;
 
@@ -353,7 +357,7 @@ export default function CommBankStyleDashboard() {
     router.push("/login");
   };
 
-  // Unified Realtime subscription for instant profile updates & live transaction sync
+  // Realtime subscription for instant profile updates & live transaction sync
   useEffect(() => {
     if (!mounted || !currentUsername) return;
 
@@ -559,21 +563,28 @@ export default function CommBankStyleDashboard() {
     setDollarInput("");
   };
 
+  // Synchronized form validation: uses anchored input tooltips for both recipient and amount
   const handleReviewPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     const latestBal = await fetchLatestBalance(currentUsername);
 
     if (latestBal === null || latestBal < 1) {
-      return alert("You need a minimum balance of $0.01 to send a transfer.");
+      dollarInputRef.current?.setCustomValidity("You need a minimum balance of $0.01 to send a transfer.");
+      dollarInputRef.current?.reportValidity();
+      return;
     }
 
     const cleanRecipient = recipient.trim().replace(/^@/, "");
     if (!cleanRecipient) {
-      return alert("Please enter a valid recipient username.");
+      recipientInputRef.current?.setCustomValidity("Please enter a valid recipient username.");
+      recipientInputRef.current?.reportValidity();
+      return;
     }
 
     if (cleanRecipient.toLowerCase() === currentUsername.toLowerCase()) {
-      return alert("You cannot send funds to your own username.");
+      recipientInputRef.current?.setCustomValidity("You cannot send funds to your own username.");
+      recipientInputRef.current?.reportValidity();
+      return;
     }
 
     const { data: recipientProfile, error: recipientError } = await supabase
@@ -583,22 +594,30 @@ export default function CommBankStyleDashboard() {
       .single();
 
     if (recipientError || !recipientProfile) {
-      return alert("Unable to proceed: Recipient not found!");
+      recipientInputRef.current?.setCustomValidity("Unable to proceed: Recipient not found!");
+      recipientInputRef.current?.reportValidity();
+      return;
     }
 
     const parsedDollars = parseFloat(dollarInput);
     if (isNaN(parsedDollars) || parsedDollars <= 0) {
-      return alert("Please enter a valid amount.");
+      dollarInputRef.current?.setCustomValidity("Please enter a valid amount.");
+      dollarInputRef.current?.reportValidity();
+      return;
     }
 
     const transferCents = Math.round(parsedDollars * 100);
 
     if (transferCents < 1) {
-      return alert("Minimum transfer amount is $0.01.");
+      dollarInputRef.current?.setCustomValidity("Minimum transfer amount is $0.01.");
+      dollarInputRef.current?.reportValidity();
+      return;
     }
 
     if (transferCents > latestBal) {
-      return alert("Value exceeds available balance.");
+      dollarInputRef.current?.setCustomValidity("Value exceeds available balance.");
+      dollarInputRef.current?.reportValidity();
+      return;
     }
 
     setPayStep("CONFIRM");
@@ -607,7 +626,8 @@ export default function CommBankStyleDashboard() {
   const handleExecutePayment = async () => {
     const latestBal = await fetchLatestBalance(currentUsername);
     if (latestBal === null || latestBal < 1) {
-      alert("You need a minimum balance of $0.01 to send a transfer.");
+      dollarInputRef.current?.setCustomValidity("You need a minimum balance of $0.01 to send a transfer.");
+      dollarInputRef.current?.reportValidity();
       return;
     }
 
@@ -615,7 +635,8 @@ export default function CommBankStyleDashboard() {
     const transferCents = Math.round(parseFloat(dollarInput) * 100);
 
     if (transferCents > latestBal) {
-      alert("Value exceeds available balance.");
+      dollarInputRef.current?.setCustomValidity("Value exceeds available balance.");
+      dollarInputRef.current?.reportValidity();
       setPayStep("INPUT");
       return;
     }
@@ -914,7 +935,7 @@ export default function CommBankStyleDashboard() {
         </div>
       )}
 
-      {/* Dashboard Metrics Grid (3 columns inline) */}
+      {/* Dashboard Metrics Grid */}
       <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 print:hidden`}>
 
         {/* 1. BANK BALANCE CARD */}
@@ -993,8 +1014,6 @@ export default function CommBankStyleDashboard() {
         {/* 2. PENDING BALANCE CARD WITH MULTIPLIER IN TOP RIGHT */}
         {isApproved && (
           <div className="bg-white rounded-xl border border-gray-200 p-2.5 sm:p-3 shadow-sm flex flex-col justify-between hover:shadow-md transition-all relative overflow-hidden">
-
-            {/* MULTIPLIER IN TOP RIGHT CORNER (COLOR-CODED BY GENDER) */}
             <div className="absolute right-3.5 top-3 z-10">
               <span className={`text-xs font-mono font-extrabold block ${
                 userGender === "Female" ? "text-pink-600" : "text-blue-600"
@@ -1046,11 +1065,9 @@ export default function CommBankStyleDashboard() {
           </div>
         )}
 
-        {/* 3. TOTAL ACTIVITY TIMER CARD WITH REDUCED SPACING BETWEEN TIER ICONS */}
+        {/* 3. TOTAL ACTIVITY TIMER CARD */}
         {isApproved && (
           <div className="bg-white rounded-xl border border-gray-200 p-2.5 sm:p-3 shadow-sm flex flex-col justify-between hover:shadow-md transition-all relative">
-
-            {/* TIME RANK (Top Section) */}
             <div className="flex items-start justify-between pb-1.5 border-b border-gray-100 mb-1.5">
               <div className="flex items-start gap-2.5 min-w-0 w-full">
                 <div className="relative w-9 h-9 shrink-0 mt-0.5">
@@ -1064,7 +1081,6 @@ export default function CommBankStyleDashboard() {
                   <div className="flex items-center justify-between">
                     <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider truncate">TIME RANK</p>
 
-                    {/* Tier Icons placed on the right side of TIME RANK */}
                     <div className="flex items-center" title={`Rank Tier ${currentTier}`}>
                       {currentTier <= 5 ? (
                         <div className="flex items-center -space-x-1">
@@ -1106,7 +1122,6 @@ export default function CommBankStyleDashboard() {
               </div>
             </div>
 
-            {/* TOTAL ACTIVITY TIMER SECTION WITH PROGRESS METER */}
             <div className="flex items-center justify-between pt-0.5 pb-0.5">
               <div className="flex flex-col">
                 <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">TOTAL ACTIVITY TIMER</p>
@@ -1152,7 +1167,6 @@ export default function CommBankStyleDashboard() {
                 </div>
               </div>
 
-              {/* PROGRESS METER (COLOR-CODED BY GENDER) */}
               <div className="bg-white p-1 rounded-full shadow-xs shrink-0 ml-2">
                 {nextBadge ? (
                   <div className="relative w-12 h-12 flex items-center justify-center" title={`Rank progress: ${progressPercent.toFixed(2)}%`}>
@@ -1192,11 +1206,11 @@ export default function CommBankStyleDashboard() {
                 )}
               </div>
             </div>
-
           </div>
         )}
       </div>
 
+      {/* Transactions Table View */}
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden print:border-none print:shadow-none">
         <div className="p-4 sm:px-5 sm:py-4 border-b border-gray-200 flex flex-col md:flex-row justify-between md:items-center gap-3 bg-gray-50/50 print:hidden">
           <div>
@@ -1208,7 +1222,6 @@ export default function CommBankStyleDashboard() {
               Showing {filteredTransactions.length === 0 ? 0 : startIndex + 1}–{Math.min(startIndex + ITEMS_PER_PAGE, filteredTransactions.length)} of {filteredTransactions.length}
               {searchQuery.trim() && ` (filtered from ${transactions.length})`}
             </span>
-
           </div>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
@@ -1309,11 +1322,8 @@ export default function CommBankStyleDashboard() {
                   <span className="md:hidden">Type</span>
                   <span className="hidden md:inline">Transaction Information</span>
                 </th>
-                {/* Date column visible only on mobile/overflow (< md) */}
                 <th className="py-3 px-3 md:px-5 border-r border-gray-200 md:hidden">Date</th>
-                {/* Single Amount column visible only on mobile/overflow (< md) */}
                 <th className="py-3 px-3 md:px-5 border-r border-gray-200 text-right md:hidden">Amount</th>
-                {/* Separate Debits and Credits visible only on wide desktop (md+) */}
                 <th className="py-3 px-3 md:px-5 border-r border-gray-200 text-right hidden md:table-cell">Debits</th>
                 <th className="py-3 px-3 md:px-5 border-r border-gray-200 text-right hidden md:table-cell">Credits</th>
                 <th className="py-3 px-4 md:px-5 text-right">Balance</th>
@@ -1372,11 +1382,11 @@ export default function CommBankStyleDashboard() {
                       title="Click to view & print official receipt"
                       className="hover:bg-amber-50/50 cursor-pointer transition group print:bg-white print:hover:bg-transparent"
                     >
-                      <td className="py-3.5 px-4 md:px-5 border-r border-gray-100 print:border-gray-300 print:bg-white relative truncate">
-                        <div className="flex items-center gap-3 relative group/item">
+                      {/* Fixed mobile view: cleaned up the overflowing absolute tooltip */}
+                      <td className="py-3.5 px-4 md:px-5 border-r border-gray-100 print:border-gray-300 print:bg-white truncate">
+                        <div className="flex items-center gap-3">
                           {getTransactionIcon(tx.type, tx.title)}
 
-                          {/* Full text details visible on medium screens (md and above) */}
                           <div className="hidden md:block flex-1 min-w-0">
                             <div className="flex items-center justify-between">
                               <span className="font-semibold text-gray-900 group-hover:text-[#b8860b] print:text-gray-900 print:group-hover:text-gray-900 transition truncate">
@@ -1406,35 +1416,19 @@ export default function CommBankStyleDashboard() {
                               {tx.dateTime} • {tx.category} • Ref: {tx.id}
                             </div>
                           </div>
-
-                          {/* Hover Tooltip appearing on smaller viewports (< md) */}
-                          <div className="absolute left-14 top-1/2 -translate-y-1/2 bg-white border border-gray-200 shadow-2xl rounded-xl p-3 z-40 opacity-0 pointer-events-none group-hover/item:opacity-100 group-hover/item:pointer-events-auto transition-all duration-200 w-72 md:hidden">
-                            <p className="font-bold text-xs text-gray-900 mb-1">
-                              {!isSpecial && tx.recipientName && tx.title.startsWith("Transfer to ") ? (
-                                <>Transfer to <span className="text-[#b8860b]">@{tx.recipientName}</span></>
-                              ) : (
-                                displayTitle
-                              )}
-                            </p>
-                            <p className="text-[11px] text-gray-500 font-mono mb-2">{tx.dateTime} • {tx.category} • Ref: {tx.id}</p>
-                            <span className="text-[10px] font-mono text-[#b8860b] font-bold">View Receipt ↗</span>
-                          </div>
                         </div>
                       </td>
 
-                      {/* Date column visible only on mobile/overflow (< md) */}
                       <td className="py-3.5 px-3 md:px-5 border-r border-gray-100 print:border-gray-300 print:bg-white text-xs font-mono text-gray-600 md:hidden truncate">
                         {formatDateDDMMYYYY(tx.dateTime)}
                       </td>
 
-                      {/* Merged Amount column visible only on mobile/overflow (< md) */}
                       <td className="py-3.5 px-3 md:px-5 border-r border-gray-100 print:border-gray-300 print:bg-white text-right font-mono md:hidden truncate">
                         <span className={`font-semibold ${isCredit ? "text-emerald-600" : "text-rose-600"}`}>
                           {isCredit ? "+" : "-"}{formatCurrency(tx.centsAmount)}
                         </span>
                       </td>
 
-                      {/* Separate Debits column visible only on wide desktop (md+) */}
                       <td className="py-3.5 px-3 md:px-5 border-r border-gray-100 print:border-gray-300 print:bg-white text-right font-mono hidden md:table-cell truncate">
                         {!isCredit ? (
                           <span className="font-semibold text-rose-600 print:text-rose-600">
@@ -1445,7 +1439,6 @@ export default function CommBankStyleDashboard() {
                         )}
                       </td>
 
-                      {/* Separate Credits column visible only on wide desktop (md+) */}
                       <td className="py-3.5 px-3 md:px-5 border-r border-gray-100 print:border-gray-300 print:bg-white text-right font-mono hidden md:table-cell truncate">
                         {isCredit ? (
                           <span className="font-semibold text-emerald-600 print:text-emerald-600">
@@ -1463,183 +1456,401 @@ export default function CommBankStyleDashboard() {
                   );
                 })
               )}
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
+
+        {filteredTransactions.length > ITEMS_PER_PAGE && (
+          <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between text-xs text-gray-600 print:hidden">
+            <span>
+              Page <strong>{currentPage}</strong> of <strong>{totalPages}</strong> (30 items / page)
+            </span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1.5 rounded border border-gray-300 bg-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition cursor-pointer"
+              >
+                Previous
+              </button>
+              <button
+                onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1.5 rounded border border-gray-300 bg-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition cursor-pointer"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {filteredTransactions.length > ITEMS_PER_PAGE && (
-        <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between text-xs text-gray-600 print:hidden">
-          <span>
-            Page <strong>{currentPage}</strong> of <strong>{totalPages}</strong> (30 items / page)
-          </span>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-              disabled={currentPage === 1}
-              className="px-3 py-1.5 rounded border border-gray-300 bg-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition cursor-pointer"
-            >
-              Previous
-            </button>
-            <button
-              onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
-              disabled={currentPage === totalPages}
-              className="px-3 py-1.5 rounded border border-gray-300 bg-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100 transition cursor-pointer"
-            >
-              Next
-            </button>
+      {/* PAYMENT FLOW MODAL (Unified styling matching Navbar Sign Out Modal) */}
+      {showPayModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 print:p-0 print:bg-white print:static">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-sm overflow-hidden transition-all text-left print:border-none print:shadow-none print:max-w-none">
+            <div className="bg-[#000000] text-white p-4 flex justify-between items-center print:hidden font-bold">
+              <h3 className="text-base font-bold text-white">
+                {payStep === "INPUT" && "Pay Someone"}
+                {payStep === "CONFIRM" && "Review & Confirm Transfer"}
+                {payStep === "RECEIPT" && "OFFICIAL TRANSACTION RECEIPT"}
+              </h3>
+              {payStep !== "RECEIPT" && (
+                <button
+                  onClick={handleClosePayModal}
+                  className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <div className="h-1 bg-[#e7b833] print:hidden" />
+
+            {payStep === "INPUT" && (
+              <form onSubmit={handleReviewPayment} className="p-5 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                    Recipient Payment ID (Username)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2 text-gray-500 font-semibold">@</span>
+                    <input
+                      ref={recipientInputRef}
+                      type="text"
+                      required
+                      placeholder="JohnSmith (Case Insensitive)"
+                      value={recipient}
+                      onChange={(e) => {
+                        e.target.setCustomValidity("");
+                        setRecipient(e.target.value.replace(/^@/, ""));
+                      }}
+                      className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded text-sm text-black focus:outline-none focus:border-[#e7b833]"
+                    />
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    Send funds securely across verified user accounts instantly!
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Amount ($)</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2 text-gray-500 font-semibold">$</span>
+                    <input
+                      ref={dollarInputRef}
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      max={balanceCents !== null ? balanceCents / 100 : undefined}
+                      value={dollarInput}
+                      onChange={(e) => {
+                        e.target.setCustomValidity("");
+                        setDollarInput(e.target.value);
+                      }}
+                      placeholder="1.00"
+                      className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded text-sm text-black font-mono focus:outline-none focus:border-[#e7b833]"
+                    />
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1 flex justify-between">
+                    <span>Minimum: <strong>$0.01</strong></span>
+                    <span>Available: <strong>{balanceCents !== null ? formatCurrency(balanceCents) : "$—"}</strong></span>
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 p-3 rounded border border-gray-200 text-xs text-gray-600 space-y-1">
+                  <div className="flex justify-between">
+                    <span>From:</span>
+                    <span className="font-semibold text-gray-800">@{currentUsername}</span>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleClosePayModal}
+                    className="w-1/2 py-2 rounded text-xs font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="w-1/2 py-2 rounded text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
+                  >
+                    Review Transfer
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {payStep === "CONFIRM" && (
+              <div className="p-5 space-y-4">
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3.5 flex gap-3 text-amber-900">
+                  <svg className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                  </svg>
+                  <div className="text-xs leading-relaxed">
+                    <strong className="font-bold block text-amber-950">Confirm Payment Details</strong>
+                    Instant transfers cannot be reversed. Please verify that the recipient username is correct before sending.
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 space-y-2.5 text-xs text-gray-700">
+                  <div className="flex justify-between items-center pb-2 border-b border-gray-200">
+                    <span className="text-gray-500 uppercase tracking-wider font-semibold text-[10px]">Transfer Amount</span>
+                    <span className="text-xl font-mono font-bold text-gray-900">
+                      ${parseFloat(dollarInput).toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Sender ID:</span>
+                    <strong className="text-gray-900 font-mono text-sm">@{currentUsername}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Recipient ID:</span>
+                    <strong className="text-gray-900 font-mono text-sm">@{recipient.trim().replace(/^@/, "")}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Category:</span>
+                    <span className="font-semibold text-gray-900">Debit</span>
+                  </div>
+                  <div className="flex justify-between pt-1 border-t border-gray-200">
+                    <span className="text-gray-500">Remaining Balance:</span>
+                    <span className="font-mono font-semibold text-gray-800">
+                      {balanceCents !== null ? formatCurrency(balanceCents - Math.round(parseFloat(dollarInput) * 100)) : "$—"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setPayStep("INPUT")}
+                    className="w-1/2 py-2 rounded text-xs font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
+                  >
+                    Back / Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExecutePayment}
+                    className="w-1/2 py-2 rounded text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
+                  >
+                    Authorize & Send
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {payStep === "RECEIPT" && completedTxn && (
+              <div className="p-6 text-center space-y-5 print:pt-14 print:px-12 print:pb-8 print:max-w-xl print:mx-auto">
+                <div className="hidden print:block pb-4 mb-4 border-b border-gray-300 text-left">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h1 className="text-xl font-black text-gray-900">SOCIAL TIME</h1>
+                      <p className="text-xs uppercase tracking-wider text-gray-500 font-bold">OFFICIAL TRANSACTION RECEIPT</p>
+                    </div>
+                    <div className="text-right text-xs text-gray-600">
+                      <div>Date Requested: <strong>{getRequestedTimestamp()}</strong></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-bold mb-1.5 bg-rose-100 text-rose-800 print:bg-rose-100 print:text-rose-800">
+                    Settled Transfer
+                  </span>
+                  <h4 className="text-xl font-extrabold text-gray-900">
+                    {completedTxn.recipientName ? `Transfer to @${completedTxn.recipientName}` : completedTxn.title}
+                  </h4>
+                  <p className="text-xs text-gray-500 mt-0.5 font-mono">Reference: {completedTxn.id}</p>
+                </div>
+
+                <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-4 text-left space-y-2 text-xs print:border-solid print:bg-white print:p-6">
+                  <div className="flex justify-between items-center pb-2 border-b border-gray-200">
+                    <span className="text-gray-500 font-medium">Total Amount</span>
+                    <span className={`text-base font-mono font-black ${
+                      completedTxn.type === "CREDIT" ? "text-emerald-600 print:text-emerald-600" : "text-rose-600 print:text-rose-600"
+                    }`}>
+                      {completedTxn.type === "CREDIT" ? "+" : "-"}{formatCurrency(completedTxn.centsAmount)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Sender ID</span>
+                    <span className="font-semibold text-gray-900 font-mono">@{completedTxn.senderName || currentUsername}</span>
+                  </div>
+                  {completedTxn.recipientName && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Recipient ID</span>
+                      <span className="font-semibold text-gray-900 font-mono">@{completedTxn.recipientName}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Category</span>
+                    <span className="text-gray-800">{completedTxn.category}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Date & Timestamp</span>
+                    <span className="text-gray-800 font-mono">{completedTxn.dateTime}</span>
+                  </div>
+                  <div className="flex justify-between pt-1 border-t border-gray-200">
+                    <span className="text-gray-500">Running Balance</span>
+                    <span className="font-mono font-bold text-gray-900">
+                      {formatCurrency(viewingTxn?.balanceAfterCents ?? completedTxn.balanceAfterCents)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex gap-2.5 pt-1 print:hidden">
+                  <button
+                    type="button"
+                    onClick={handlePrintIndividualReceipt}
+                    className="w-1/2 py-2 rounded text-xs font-semibold border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 flex items-center justify-center gap-1.5 transition cursor-pointer"
+                  >
+                    Print Receipt
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClosePayModal}
+                    className="w-1/2 py-2 rounded text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
-    </div>
 
-    {/* PAYMENT FLOW MODAL */}
-    {showPayModal && (
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 print:p-0 print:bg-white print:static">
-        <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all print:border-none print:shadow-none print:max-w-none">
-          <div className="bg-[#1e293b] text-white p-4 flex justify-between items-center print:hidden">
-            <h3 className="text-base font-bold">
-              {payStep === "INPUT" && "Pay Someone"}
-              {payStep === "CONFIRM" && "Review & Confirm Transfer"}
-              {payStep === "RECEIPT" && "OFFICIAL TRANSACTION RECEIPT"}
-            </h3>
-            {payStep !== "RECEIPT" && (
+      {/* ADMIN CAPITAL INJECTION MODAL (Unified styling matching Navbar Sign Out Modal) */}
+      {showAdminModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-sm overflow-hidden transition-all text-left">
+            <div className="bg-[#000000] text-white p-4 flex justify-between items-center font-bold">
+              <h3 className="text-base font-bold text-white">Admin Capital Injection</h3>
               <button
-                onClick={handleClosePayModal}
+                onClick={() => setShowAdminModal(false)}
                 className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer"
               >
                 ✕
               </button>
-            )}
-          </div>
-          <div className="h-1 bg-[#e7b833] print:hidden" />
+            </div>
+            <div className="h-1 bg-[#e7b833]" />
 
-          {payStep === "INPUT" && (
-            <form onSubmit={handleReviewPayment} className="p-5 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Recipient Payment ID (Username)
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-2 text-gray-500 font-semibold">@</span>
-                  <input
-                    type="text"
-                    required
-                    placeholder="JohnSmith (Case Insensitive)"
-                    value={recipient}
-                    onChange={(e) => setRecipient(e.target.value.replace(/^@/, ""))}
-                    className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded text-sm text-black focus:outline-none focus:border-[#e7b833]"
-                  />
-                </div>
-                <p className="text-[11px] text-gray-400 mt-1">
-                  Send funds securely across verified user accounts instantly!
-                </p>
+            <form onSubmit={handleAdminInject} className="p-5 space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
+                You are logged in as <strong>KingDavid</strong> (Administrator). Enter any amount to mint directly into your wallet balance.
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Amount ($)</label>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                  Injection Amount ($)
+                </label>
                 <div className="relative">
                   <span className="absolute left-3 top-2 text-gray-500 font-semibold">$</span>
                   <input
                     type="number"
                     step="0.01"
                     min="0.01"
-                    max={balanceCents !== null ? balanceCents / 100 : undefined}
-                    value={dollarInput}
-                    onChange={(e) => setDollarInput(e.target.value)}
-                    placeholder="1.00"
+                    required
+                    placeholder="e.g. 1000.00"
+                    value={adminDollarInput}
+                    onChange={(e) => setAdminDollarInput(e.target.value)}
                     className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded text-sm text-black font-mono focus:outline-none focus:border-[#e7b833]"
                   />
-                </div>
-                <div className="text-xs text-gray-500 mt-1 flex justify-between">
-                  <span>Minimum: <strong>$0.01</strong></span>
-                  <span>Available balance: <strong>{balanceCents !== null ? formatCurrency(balanceCents) : "$—"}</strong></span>
-                </div>
-              </div>
-
-              <div className="bg-gray-50 p-3 rounded border border-gray-200 text-xs text-gray-600 space-y-1">
-                <div className="flex justify-between">
-                  <span>From:</span>
-                  <span className="font-semibold text-gray-800">@{currentUsername}</span>
                 </div>
               </div>
 
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={handleClosePayModal}
-                  className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer"
+                  onClick={() => setShowAdminModal(false)}
+                  className="w-1/2 py-2 rounded text-xs font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
+                  className="w-1/2 py-2 rounded text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
                 >
-                  Review Transfer
+                  Mint Funds
                 </button>
               </div>
             </form>
-          )}
+          </div>
+        </div>
+      )}
 
-          {payStep === "CONFIRM" && (
-            <div className="p-5 space-y-4">
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3.5 flex gap-3 text-amber-900">
-                <svg className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-                </svg>
-                <div className="text-xs leading-relaxed">
-                  <strong className="font-bold block text-amber-950">Confirm Payment Details</strong>
-                  Instant transfers cannot be reversed. Please verify that the recipient username is correct before sending.
-                </div>
+      {/* DASHBOARD CUSTOM ADD DAYS MODAL (++) */}
+      {showDashboardAddDaysModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-sm overflow-hidden transition-all text-left">
+            <div className="bg-[#000000] text-white p-4 flex justify-between items-center font-bold">
+              <h3 className="text-base font-bold text-white">⏱️ Add Activity Days</h3>
+              <button
+                onClick={() => setShowDashboardAddDaysModal(false)}
+                className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="h-1 bg-[#e7b833]" />
+
+            <form onSubmit={handleExecuteDashboardAddDays} className="p-5 space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
+                Enter the number of days to append to <strong>KingDavid</strong>&apos;s activity timer and elevate badge rank.
               </div>
 
-              <div className="bg-gray-50 rounded-lg border border-gray-200 p-4 space-y-2.5 text-xs text-gray-700">
-                <div className="flex justify-between items-center pb-2 border-b border-gray-200">
-                  <span className="text-gray-500 uppercase tracking-wider font-semibold text-[10px]">Transfer Amount</span>
-                  <span className="text-xl font-mono font-bold text-gray-900">
-                    ${parseFloat(dollarInput).toFixed(2)}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Sender ID:</span>
-                  <strong className="text-gray-900 font-mono text-sm">@{currentUsername}</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Recipient ID:</span>
-                  <strong className="text-gray-900 font-mono text-sm">@{recipient.trim().replace(/^@/, "")}</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Category:</span>
-                  <span className="font-semibold text-gray-900">Debit</span>
-                </div>
-                <div className="flex justify-between pt-1 border-t border-gray-200">
-                  <span className="text-gray-500">Remaining Balance:</span>
-                  <span className="font-mono font-semibold text-gray-800">
-                    {balanceCents !== null ? formatCurrency(balanceCents - Math.round(parseFloat(dollarInput) * 100)) : "$—"}
-                  </span>
-                </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                  Days to Add
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="1000000000"
+                  required
+                  placeholder="e.g. 10"
+                  value={dashboardAddDaysInput}
+                  onChange={(e) => setDashboardAddDaysInput(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded text-sm text-black font-mono focus:outline-none focus:border-[#e7b833]"
+                />
               </div>
 
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setPayStep("INPUT")}
-                  className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer"
+                  onClick={() => setShowDashboardAddDaysModal(false)}
+                  className="w-1/2 py-2 rounded text-xs font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
                 >
-                  Back / Edit
+                  Cancel
                 </button>
                 <button
-                  type="button"
-                  onClick={handleExecutePayment}
-                  className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
+                  type="submit"
+                  className="w-1/2 py-2 rounded text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
                 >
-                  Authorize & Send
+                  Add Days
                 </button>
               </div>
-            </div>
-          )}
+            </form>
+          </div>
+        </div>
+      )}
 
-          {payStep === "RECEIPT" && completedTxn && (
+      {/* HISTORICAL RECEIPT MODAL */}
+      {viewingTxn && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 print:p-0 print:bg-white print:static">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-sm overflow-hidden transition-all text-left print:border-none print:shadow-none print:max-w-none">
+            <div className="bg-[#000000] text-white p-4 flex justify-between items-center print:hidden font-bold">
+              <h3 className="text-base font-bold text-white">OFFICIAL TRANSACTION RECEIPT</h3>
+              <button
+                onClick={() => setViewingTxn(null)}
+                className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="h-1 bg-[#e7b833]" />
+
             <div className="p-6 text-center space-y-5 print:pt-14 print:px-12 print:pb-8 print:max-w-xl print:mx-auto">
               <div className="hidden print:block pb-4 mb-4 border-b border-gray-300 text-left">
                 <div className="flex justify-between items-start">
@@ -1654,46 +1865,54 @@ export default function CommBankStyleDashboard() {
               </div>
 
               <div>
-                <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-bold mb-1.5 bg-rose-100 text-rose-800 print:bg-rose-100 print:text-rose-800">
-                  Settled Transfer
+                <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold mb-1.5 ${
+                  viewingTxn.type === "CREDIT"
+                    ? "bg-emerald-100 text-emerald-800 print:bg-emerald-100 print:text-emerald-800"
+                    : "bg-rose-100 text-rose-800 print:bg-rose-100 print:text-rose-800"
+                }`}>
+                  {viewingTxn.type === "CREDIT" ? "Direct Credit" : "Settled Transfer"}
                 </span>
                 <h4 className="text-xl font-extrabold text-gray-900">
-                  {completedTxn.recipientName ? `Transfer to @${completedTxn.recipientName}` : completedTxn.title}
+                  {viewingTxn.title === "Admin Capital Injection" || viewingTxn.title === "Pending Balance Transfer"
+                    ? viewingTxn.title
+                    : (viewingTxn.recipientName ? `Transfer to @${viewingTxn.recipientName}` : viewingTxn.title)}
                 </h4>
-                <p className="text-xs text-gray-500 mt-0.5 font-mono">Reference: {completedTxn.id}</p>
+                <p className="text-xs text-gray-500 mt-0.5 font-mono">Reference: {viewingTxn.id}</p>
               </div>
 
               <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-4 text-left space-y-2 text-xs print:border-solid print:bg-white print:p-6">
                 <div className="flex justify-between items-center pb-2 border-b border-gray-200">
                   <span className="text-gray-500 font-medium">Total Amount</span>
                   <span className={`text-base font-mono font-black ${
-                    completedTxn.type === "CREDIT" ? "text-emerald-600 print:text-emerald-600" : "text-rose-600 print:text-rose-600"
+                    viewingTxn.type === "CREDIT" ? "text-emerald-600 print:text-emerald-600" : "text-rose-600 print:text-rose-600"
                   }`}>
-                    {completedTxn.type === "CREDIT" ? "+" : "-"}{formatCurrency(completedTxn.centsAmount)}
+                    {viewingTxn.type === "CREDIT" ? "+" : "-"}{formatCurrency(viewingTxn.centsAmount)}
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Sender ID</span>
-                  <span className="font-semibold text-gray-900 font-mono">@{completedTxn.senderName || currentUsername}</span>
-                </div>
-                {completedTxn.recipientName && (
+                {viewingTxn.title !== "Admin Capital Injection" && viewingTxn.title !== "Pending Balance Transfer" && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Sender ID</span>
+                    <span className="font-semibold text-gray-900 font-mono">@{viewingTxn.senderName || currentUsername}</span>
+                  </div>
+                )}
+                {viewingTxn.recipientName && (
                   <div className="flex justify-between">
                     <span className="text-gray-500">Recipient ID</span>
-                    <span className="font-semibold text-gray-900 font-mono">@{completedTxn.recipientName}</span>
+                    <span className="font-semibold text-gray-900 font-mono">@{viewingTxn.recipientName}</span>
                   </div>
                 )}
                 <div className="flex justify-between">
                   <span className="text-gray-500">Category</span>
-                  <span className="text-gray-800">{completedTxn.category}</span>
+                  <span className="text-gray-800">{viewingTxn.category}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Date & Timestamp</span>
-                  <span className="text-gray-800 font-mono">{completedTxn.dateTime}</span>
+                  <span className="text-gray-800 font-mono">{viewingTxn.dateTime}</span>
                 </div>
                 <div className="flex justify-between pt-1 border-t border-gray-200">
                   <span className="text-gray-500">Running Balance</span>
                   <span className="font-mono font-bold text-gray-900">
-                    {formatCurrency(viewingTxn?.balanceAfterCents ?? completedTxn.balanceAfterCents)}
+                    {formatCurrency(viewingTxn.balanceAfterCents)}
                   </span>
                 </div>
               </div>
@@ -1702,246 +1921,22 @@ export default function CommBankStyleDashboard() {
                 <button
                   type="button"
                   onClick={handlePrintIndividualReceipt}
-                  className="w-1/2 py-2.5 rounded-lg text-sm font-semibold border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 flex items-center justify-center gap-1.5 transition cursor-pointer"
+                  className="w-1/2 py-2 rounded text-xs font-semibold border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 flex items-center justify-center gap-1.5 transition cursor-pointer"
                 >
-                  <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0 1 10.56 0m-10.56 0L6.34 18m11.318-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0 .229 2.523a1.125 1.125 0 0 1-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0 0 21 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 0 0-1.913-.247M6.34 18H5.25A2.25 2.25 0 0 1 3 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 0 1 1.913-.247m10.5 0a48.536 48.536 0 0 0-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5Zm-3 0h.008v.008H15V10.5Z" />
-                  </svg>
                   Print Receipt
                 </button>
                 <button
                   type="button"
-                  onClick={handleClosePayModal}
-                  className="w-1/2 py-2.5 rounded-lg text-sm font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow-sm transition cursor-pointer"
+                  onClick={() => setViewingTxn(null)}
+                  className="w-1/2 py-2 rounded text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
                 >
                   Done
                 </button>
               </div>
             </div>
-          )}
-        </div>
-      </div>
-    )}
-
-    {/* ADMIN CAPITAL INJECTION MODAL */}
-    {showAdminModal && (
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-        <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all text-left">
-          <div className="bg-[#b8860b] text-white p-4 flex justify-between items-center font-bold">
-            <h3 className="text-base font-bold text-white">Admin Capital Injection</h3>
-            <button
-              onClick={() => setShowAdminModal(false)}
-              className="text-amber-100 hover:text-white text-lg leading-none cursor-pointer"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="h-1 bg-[#9a7009]" />
-
-          <form onSubmit={handleAdminInject} className="p-5 space-y-4">
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
-              You are logged in as <strong>KingDavid</strong> (Administrator). Enter any amount to mint directly into your wallet balance.
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                Injection Amount ($)
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-2 text-gray-500 font-semibold">$</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  required
-                  placeholder="e.g. 1000.00"
-                  value={adminDollarInput}
-                  onChange={(e) => setAdminDollarInput(e.target.value)}
-                  className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded text-sm text-black font-mono focus:outline-none focus:border-[#b8860b]"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowAdminModal(false)}
-                className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#b8860b] hover:bg-[#d4a52b] text-white shadow transition cursor-pointer"
-              >
-                Mint Funds
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    )}
-
-    {/* DASHBOARD CUSTOM ADD DAYS MODAL (++) */}
-    {showDashboardAddDaysModal && (
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-        <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all text-left">
-          <div className="bg-[#0d8b07] text-white p-4 flex justify-between items-center font-bold">
-            <h3 className="text-base font-bold">⏱️ Add Activity Days</h3>
-            <button
-              onClick={() => setShowDashboardAddDaysModal(false)}
-              className="text-emerald-100 hover:text-white text-lg leading-none cursor-pointer"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="h-1 bg-[#0a6d05]" />
-
-          <form onSubmit={handleExecuteDashboardAddDays} className="p-5 space-y-4">
-            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-900">
-              Enter the number of days to append to <strong>KingDavid</strong>&apos;s activity timer and elevate badge rank.
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                Days to Add
-              </label>
-              <input
-                type="number"
-                min="1"
-                max="1000000000"
-                required
-                placeholder="e.g. 10"
-                value={dashboardAddDaysInput}
-                onChange={(e) => setDashboardAddDaysInput(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded text-sm text-black font-mono focus:outline-none focus:border-[#0d8b07]"
-              />
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowDashboardAddDaysModal(false)}
-                className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#0d8b07] hover:bg-[#0a6d05] text-white shadow transition cursor-pointer"
-              >
-                Add Days
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    )}
-
-    {/* HISTORICAL RECEIPT MODAL */}
-    {viewingTxn && (
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 print:p-0 print:bg-white print:static">
-        <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all print:border-none print:shadow-none print:max-w-none">
-          <div className="bg-[#1e293b] text-white p-4 flex justify-between items-center print:hidden">
-            <h3 className="text-base font-bold">OFFICIAL TRANSACTION RECEIPT</h3>
-            <button
-              onClick={() => setViewingTxn(null)}
-              className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="h-1 bg-[#e7b833] print:hidden" />
-
-          <div className="p-6 text-center space-y-5 print:pt-14 print:px-12 print:pb-8 print:max-w-xl print:mx-auto">
-            <div className="hidden print:block pb-4 mb-4 border-b border-gray-300 text-left">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h1 className="text-xl font-black text-gray-900">SOCIAL TIME</h1>
-                  <p className="text-xs uppercase tracking-wider text-gray-500 font-bold">OFFICIAL TRANSACTION RECEIPT</p>
-                </div>
-                <div className="text-right text-xs text-gray-600">
-                  <div>Date Requested: <strong>{getRequestedTimestamp()}</strong></div>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold mb-1.5 ${
-                viewingTxn.type === "CREDIT"
-                  ? "bg-emerald-100 text-emerald-800 print:bg-emerald-100 print:text-emerald-800"
-                  : "bg-rose-100 text-rose-800 print:bg-rose-100 print:text-rose-800"
-              }`}>
-                {viewingTxn.type === "CREDIT" ? "Direct Credit" : "Settled Transfer"}
-              </span>
-              <h4 className="text-xl font-extrabold text-gray-900">
-                {viewingTxn.title === "Admin Capital Injection" || viewingTxn.title === "Pending Balance Transfer"
-                  ? viewingTxn.title
-                  : (viewingTxn.recipientName ? `Transfer to @${viewingTxn.recipientName}` : viewingTxn.title)}
-              </h4>
-              <p className="text-xs text-gray-500 mt-0.5 font-mono">Reference: {viewingTxn.id}</p>
-            </div>
-
-            <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-4 text-left space-y-2 text-xs print:border-solid print:bg-white print:p-6">
-              <div className="flex justify-between items-center pb-2 border-b border-gray-200">
-                <span className="text-gray-500 font-medium">Total Amount</span>
-                <span className={`text-base font-mono font-black ${
-                  viewingTxn.type === "CREDIT" ? "text-emerald-600 print:text-emerald-600" : "text-rose-600 print:text-rose-600"
-                }`}>
-                  {viewingTxn.type === "CREDIT" ? "+" : "-"}{formatCurrency(viewingTxn.centsAmount)}
-                </span>
-              </div>
-              {viewingTxn.title !== "Admin Capital Injection" && viewingTxn.title !== "Pending Balance Transfer" && (
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Sender ID</span>
-                  <span className="font-semibold text-gray-900 font-mono">@{viewingTxn.senderName || currentUsername}</span>
-                </div>
-              )}
-              {viewingTxn.recipientName && (
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Recipient ID</span>
-                  <span className="font-semibold text-gray-900 font-mono">@{viewingTxn.recipientName}</span>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span className="text-gray-500">Category</span>
-                <span className="text-gray-800">{viewingTxn.category}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Date & Timestamp</span>
-                <span className="text-gray-800 font-mono">{viewingTxn.dateTime}</span>
-              </div>
-              <div className="flex justify-between pt-1 border-t border-gray-200">
-                <span className="text-gray-500">Running Balance</span>
-                <span className="font-mono font-bold text-gray-900">
-                  {formatCurrency(viewingTxn.balanceAfterCents)}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex gap-2.5 pt-1 print:hidden">
-              <button
-                type="button"
-                onClick={handlePrintIndividualReceipt}
-                className="w-1/2 py-2.5 rounded-lg text-sm font-semibold border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 flex items-center justify-center gap-1.5 transition cursor-pointer"
-              >
-                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0 1 10.56 0m-10.56 0L6.34 18m11.318-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0 .229 2.523a1.125 1.125 0 0 1-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0 0 21 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 0 0-1.913-.247M6.34 18H5.25A2.25 2.25 0 0 1 3 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 0 1 1.913-.247m10.5 0a48.536 48.536 0 0 0-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18 10.5h.008v.008H18V10.5Zm-3 0h.008v.008H15V10.5Z" />
-                </svg>
-                Print Receipt
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewingTxn(null)}
-                className="w-1/2 py-2.5 rounded-lg text-sm font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow-sm transition cursor-pointer"
-              >
-                Done
-              </button>
-            </div>
           </div>
         </div>
-      </div>
-    )}
-  </div>
+      )}
+    </div>
   );
 }

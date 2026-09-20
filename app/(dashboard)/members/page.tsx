@@ -4,17 +4,9 @@ import { useEffect, useState, useCallback } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import { useRouter } from "next/navigation";
 
-interface FriendRelation {
-  id: string;
-  sender_username: string;
-  receiver_username: string;
-  status: "pending" | "accepted";
-  profile?: any;
-}
-
 interface ConfirmModalState {
   isOpen: boolean;
-  type: "reject" | "cancel" | "delete_user" | null;
+  type: "reject" | "cancel" | "remove" | "delete_user" | null;
   relationId: string | null;
   targetName: string | null;
   targetUserId?: string | null;
@@ -33,11 +25,11 @@ export default function MembersPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [deleteLoadingUserId, setDeleteLoadingUserId] = useState<string | null>(null);
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   // Admin Signup Info Modal State
   const [adminModalProfile, setAdminModalProfile] = useState<any | null>(null);
 
+  // Custom Confirmation Modal State
   const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
     isOpen: false,
     type: null,
@@ -96,11 +88,7 @@ export default function MembersPage() {
       .eq("is_approved", true);
 
     if (allProfiles) {
-      const filtered = allProfiles.filter((p) => {
-        const isSelf = p.username.toLowerCase() === myUsername.toLowerCase();
-        return !isSelf;
-      });
-
+      const filtered = allProfiles.filter((p) => p.username.toLowerCase() !== myUsername.toLowerCase());
       const enrichedMembers = filtered.map((m) => {
         const connection = connectionMap.get(m.username.toLowerCase());
         return {
@@ -110,31 +98,42 @@ export default function MembersPage() {
           friendshipSender: connection?.sender || null,
         };
       });
-
       setMembers(enrichedMembers);
     }
+
     if (isInitial) setLoading(false);
   }, [router, supabase]);
 
   useEffect(() => {
     loadMembersData(true);
+  }, [loadMembersData]);
 
-    const interval = setInterval(() => {
-      loadMembersData(false);
-    }, 3000);
+  // Realtime subscription replacing 3-second polling
+  useEffect(() => {
+    const channel = supabase
+      .channel("members-realtime-sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "friendships" },
+        () => {
+          loadMembersData(false);
+        }
+      )
+      .subscribe();
 
-    return () => clearInterval(interval);
-  }, [loadMembersData, refreshTrigger]);
-
-  const triggerRefresh = () => {
-    setRefreshTrigger((prev) => prev + 1);
-  };
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, loadMembersData]);
 
   const handleAddMember = async (targetUsername: string) => {
     if (!isApproved) {
       alert("Account pending approval. Adding members is locked.");
       return;
     }
+    if (actionLoadingId) return;
+
+    setActionLoadingId(targetUsername);
 
     const { error } = await supabase.from("friendships").insert({
       sender_username: currentUsername,
@@ -142,37 +141,21 @@ export default function MembersPage() {
       status: "pending",
     });
 
-    if (error) {
-      if (error.code === "23505") {
-        loadMembersData(false);
-        triggerRefresh();
-      } else {
-        alert("Failed to send request: " + error.message);
-      }
-    } else {
-      loadMembersData(false);
-      triggerRefresh();
+    if (error && error.code !== "23505") {
+      alert("Failed to send request: " + error.message);
     }
+
+    await loadMembersData(false);
+    setActionLoadingId(null);
   };
 
-  const handleRemoveMember = async (relationId: string, targetName: string) => {
-    if (actionLoadingId) return;
-    if (!confirm(`Are you sure you want to remove @${targetName} from your friends list?`)) return;
-
-    setActionLoadingId(relationId);
-    const { error } = await supabase
-      .from("friendships")
-      .delete()
-      .eq("id", relationId);
-
-    if (error) {
-      alert("Failed to remove friend: " + error.message);
-      setActionLoadingId(null);
-    } else {
-      loadMembersData(false);
-      triggerRefresh();
-      setActionLoadingId(null);
-    }
+  const handleRemoveMember = (relationId: string, targetName: string) => {
+    setConfirmModal({
+      isOpen: true,
+      type: "remove",
+      relationId,
+      targetName,
+    });
   };
 
   const executeConfirmedAction = async () => {
@@ -190,18 +173,15 @@ export default function MembersPage() {
 
     if (error) {
       alert(`Failed to ${actionType} request: ` + error.message);
-      setActionLoadingId(null);
     } else {
-      loadMembersData(false);
-      triggerRefresh();
-      setActionLoadingId(null);
+      await loadMembersData(false);
     }
+    setActionLoadingId(null);
   };
 
   const executeDeleteUserFull = async () => {
     if (!confirmModal.targetUserId || confirmModal.type !== "delete_user") return;
     const userIdToDelete = confirmModal.targetUserId;
-
     setConfirmModal({ isOpen: false, type: null, relationId: null, targetName: null, targetUserId: null });
     setDeleteLoadingUserId(userIdToDelete);
 
@@ -227,54 +207,20 @@ export default function MembersPage() {
         }
 
         await supabase.from("friendships").delete().or(`sender_username.eq.${uName},receiver_username.eq.${uName}`);
-
-        const { data: userPosts } = await supabase.from("posts").select("id").eq("username", uName);
-        if (userPosts && userPosts.length > 0) {
-          const pIds = userPosts.map(p => p.id);
-          await supabase.from("post_likes").delete().in("post_id", pIds);
-          await supabase.from("post_comments").delete().in("post_id", pIds);
-          await supabase.from("posts").delete().eq("username", uName);
-        }
+        await supabase.from("posts").delete().eq("username", uName);
         await supabase.from("post_likes").delete().eq("username", uName);
         await supabase.from("post_comments").delete().eq("username", uName);
         await supabase.from("posts").delete().ilike("profile_username", uName);
-
+        await supabase.from("profile_gallery").delete().ilike("profile_username", uName);
         await supabase.from("profiles").delete().eq("user_id", userIdToDelete);
       }
 
-      const { error: rpcError } = await supabase.rpc("admin_delete_user", { target_user_id: userIdToDelete });
-      if (rpcError) {
-        alert("Auth user deletion failed: " + rpcError.message);
-      }
-
-      loadMembersData(false);
-      triggerRefresh();
-      setDeleteLoadingUserId(null);
+      await supabase.rpc("admin_delete_user", { target_user_id: userIdToDelete });
+      await loadMembersData(false);
     } catch (err: any) {
       alert("Failed to delete user entirely: " + (err.message || err));
+    } finally {
       setDeleteLoadingUserId(null);
-    }
-  };
-
-  const executeModalAcceptFromReject = async () => {
-    if (!confirmModal.relationId) return;
-    const relationId = confirmModal.relationId;
-
-    setConfirmModal({ isOpen: false, type: null, relationId: null, targetName: null, targetUserId: null });
-    setActionLoadingId(relationId);
-
-    const { error } = await supabase
-      .from("friendships")
-      .update({ status: "accepted" })
-      .eq("id", relationId);
-
-    if (error) {
-      alert("Failed to accept request: " + error.message);
-      setActionLoadingId(null);
-    } else {
-      loadMembersData(false);
-      triggerRefresh();
-      setActionLoadingId(null);
     }
   };
 
@@ -293,15 +239,11 @@ export default function MembersPage() {
 
     if (error) {
       alert("Failed to accept request: " + error.message);
-      setActionLoadingId(null);
     } else {
-      loadMembersData(false);
-      triggerRefresh();
-      setActionLoadingId(null);
+      await loadMembersData(false);
     }
+    setActionLoadingId(null);
   };
-
-  const isFemaleModal = adminModalProfile?.gender?.toLowerCase() === "female";
 
   return (
     <div className="space-y-6">
@@ -346,18 +288,18 @@ export default function MembersPage() {
               const isPending = m.friendshipStatus === "pending";
               const isSender = isPending && m.friendshipSender?.toLowerCase() === currentUsername.toLowerCase();
               const isReceiver = isPending && !isSender;
-              const isProcessing = actionLoadingId === m.friendshipId;
-              const isDeleting = deleteLoadingUserId === m.user_id;
+              
+              // Safe check prevents null === null evaluation
+              const isProcessing = Boolean(actionLoadingId) && (actionLoadingId === m.friendshipId || actionLoadingId === m.username);
+              const isDeleting = Boolean(deleteLoadingUserId) && deleteLoadingUserId === m.user_id;
               const isFemaleMember = m.gender?.toLowerCase() === "female";
 
               return (
                 <div key={m.id} className="bg-gray-50 border border-gray-200 p-4 rounded-xl flex items-center justify-between shadow-xs relative">
-                  
                   {isAdmin && (
                     <button
                       type="button"
                       disabled={isDeleting}
-                      onMouseUp={(e) => e.currentTarget.blur()}
                       onClick={() => setConfirmModal({
                         isOpen: true,
                         type: "delete_user",
@@ -365,7 +307,7 @@ export default function MembersPage() {
                         targetName: m.username,
                         targetUserId: m.user_id,
                       })}
-                      className="absolute top-2 right-2 w-5 h-5 bg-[#800000] hover:bg-[#660000] active:bg-[#800000] text-white rounded-sm text-[10px] font-black flex items-center justify-center transition cursor-pointer shadow-xs disabled:opacity-50 focus:outline-none"
+                      className="absolute top-2 right-2 w-5 h-5 bg-[#800000] hover:bg-[#660000] text-white rounded-sm text-[10px] font-black flex items-center justify-center transition cursor-pointer shadow-xs disabled:opacity-50"
                       title="Delete user entirely"
                     >
                       {isDeleting ? "..." : "✕"}
@@ -377,7 +319,7 @@ export default function MembersPage() {
                       onClick={() => {
                         if (isAdmin) setAdminModalProfile(m);
                       }}
-                      className={`w-14 h-14 rounded-lg bg-gray-200 overflow-hidden flex-shrink-0 border border-gray-300 ${
+                      className={`w-14 h-14 rounded-lg bg-gray-200 overflow-hidden shrink-0 border border-gray-300 ${
                         isAdmin ? "cursor-pointer hover:opacity-80 transition" : ""
                       }`}
                       title={isAdmin ? "View complete signup info" : ""}
@@ -388,6 +330,7 @@ export default function MembersPage() {
                         <div className="w-full h-full flex items-center justify-center text-[10px] text-gray-400 font-bold">Img</div>
                       )}
                     </div>
+
                     <div>
                       <div className="flex items-center gap-2">
                         <h3 
@@ -411,9 +354,8 @@ export default function MembersPage() {
                       </span>
                       <button
                         disabled={isProcessing}
-                        onMouseUp={(e) => e.currentTarget.blur()}
                         onClick={() => handleRemoveMember(m.friendshipId, m.username)}
-                        className="px-2.5 py-0.5 bg-[#800000] hover:bg-[#660000] text-white rounded text-[9px] font-black uppercase tracking-wider transition cursor-pointer shadow-xs disabled:opacity-50 focus:outline-none"
+                        className="px-2.5 py-0.5 bg-[#800000] hover:bg-[#660000] text-white rounded text-[9px] font-black uppercase tracking-wider transition cursor-pointer shadow-xs disabled:opacity-50"
                         title="Remove from friends"
                       >
                         {isProcessing ? "..." : "Remove"}
@@ -426,14 +368,13 @@ export default function MembersPage() {
                       </span>
                       <button
                         disabled={isProcessing}
-                        onMouseUp={(e) => e.currentTarget.blur()}
                         onClick={() => setConfirmModal({
                           isOpen: true,
                           type: "cancel",
                           relationId: m.friendshipId,
                           targetName: m.username,
                         })}
-                        className="px-2.5 py-0.5 bg-gray-200 hover:bg-[#800000] hover:text-white text-gray-700 rounded text-[9px] font-black uppercase tracking-wider transition cursor-pointer shadow-xs disabled:opacity-50 focus:outline-none"
+                        className="px-2.5 py-0.5 bg-gray-200 hover:bg-[#800000] hover:text-white text-gray-700 rounded text-[9px] font-black uppercase tracking-wider transition cursor-pointer shadow-xs disabled:opacity-50"
                         title="Cancel sent friend request"
                       >
                         {isProcessing ? "..." : "Cancel"}
@@ -445,34 +386,23 @@ export default function MembersPage() {
                         Pending
                       </span>
                       <div className="flex gap-1">
-                        {isApproved ? (
-                          <button
-                            disabled={isProcessing}
-                            onMouseUp={(e) => e.currentTarget.blur()}
-                            onClick={() => handleAcceptRequest(m.friendshipId)}
-                            className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold transition cursor-pointer shadow-xs disabled:opacity-50 focus:outline-none"
-                            title="Accept request"
-                          >
-                            ✓
-                          </button>
-                        ) : (
-                          <button
-                            disabled
-                            className="px-2 py-0.5 bg-gray-300 text-gray-500 rounded text-xs font-bold cursor-not-allowed"
-                          >
-                            ✓
-                          </button>
-                        )}
+                        <button
+                          disabled={isProcessing || !isApproved}
+                          onClick={() => handleAcceptRequest(m.friendshipId)}
+                          className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold transition cursor-pointer shadow-xs disabled:opacity-50"
+                          title="Accept request"
+                        >
+                          ✓
+                        </button>
                         <button
                           disabled={isProcessing}
-                          onMouseUp={(e) => e.currentTarget.blur()}
                           onClick={() => setConfirmModal({
                             isOpen: true,
                             type: "reject",
                             relationId: m.friendshipId,
                             targetName: m.username,
                           })}
-                          className="px-2 py-0.5 bg-[#800000] hover:bg-[#660000] text-white rounded text-xs font-bold transition cursor-pointer shadow-xs disabled:opacity-50 focus:outline-none"
+                          className="px-2 py-0.5 bg-[#800000] hover:bg-[#660000] text-white rounded text-xs font-bold transition cursor-pointer shadow-xs disabled:opacity-50"
                           title="Reject request"
                         >
                           ✕
@@ -481,11 +411,11 @@ export default function MembersPage() {
                     </div>
                   ) : isApproved ? (
                     <button
-                      onMouseUp={(e) => e.currentTarget.blur()}
+                      disabled={isProcessing}
                       onClick={() => handleAddMember(m.username)}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-xs focus:outline-none"
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition cursor-pointer shadow-xs disabled:opacity-50"
                     >
-                      Add
+                      {isProcessing ? "..." : "Add"}
                     </button>
                   ) : (
                     <button
@@ -502,24 +432,22 @@ export default function MembersPage() {
         )}
       </div>
 
-      {/* ADMIN SIGNUP INFO MODAL */}
+      {/* UNIFIED ADMIN SIGNUP INFO MODAL */}
       {adminModalProfile && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[200]">
           <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-lg overflow-hidden transition-all text-left">
-            <div className={`p-4 flex justify-between items-center font-bold ${
-              isFemaleModal ? "bg-pink-200 text-gray-900" : "bg-blue-200 text-gray-900"
-            }`}>
-              <h3 className="text-base font-bold">
+            <div className="bg-[#000000] text-white p-4 flex justify-between items-center font-bold">
+              <h3 className="text-base font-bold text-white">
                 Signup Info: {adminModalProfile.first_name} {adminModalProfile.last_name}
               </h3>
               <button
                 onClick={() => setAdminModalProfile(null)}
-                className="text-gray-700 hover:text-black text-lg leading-none cursor-pointer"
+                className="text-gray-400 hover:text-white text-lg leading-none cursor-pointer"
               >
                 ✕
               </button>
             </div>
-            <div className={`h-1 ${isFemaleModal ? "bg-pink-300" : "bg-blue-300"}`} />
+            <div className="h-1 bg-[#e7b833]" />
 
             <div className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
               <div className="flex items-center gap-4 pb-4 border-b border-gray-100">
@@ -551,7 +479,7 @@ export default function MembersPage() {
                 <span className="font-medium text-gray-900">{adminModalProfile.address}</span>
               </div>
 
-              <div className="flex justify-between items-center pt-3 border-t border-gray-100">
+              <div className="flex justify-between items-center pt-3 border-t border-gray-100 gap-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -565,16 +493,14 @@ export default function MembersPage() {
                       targetUserId: profToDel.user_id,
                     });
                   }}
-                  className="px-4 py-2 rounded text-xs font-bold bg-[#800000] hover:bg-[#660000] text-white shadow transition cursor-pointer"
+                  className="w-1/2 py-2 rounded text-xs font-bold bg-[#800000] hover:bg-[#660000] text-white shadow transition cursor-pointer"
                 >
                   DELETE USER
                 </button>
                 <button
                   type="button"
                   onClick={() => setAdminModalProfile(null)}
-                  className={`px-6 py-2 rounded text-xs font-bold shadow transition cursor-pointer ${
-                    isFemaleModal ? "bg-pink-200 hover:bg-pink-300 text-gray-900" : "bg-blue-200 hover:bg-blue-300 text-gray-900"
-                  }`}
+                  className="w-1/2 py-2 rounded text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow transition cursor-pointer"
                 >
                   Close
                 </button>
@@ -584,17 +510,18 @@ export default function MembersPage() {
         </div>
       )}
 
-      {/* CUSTOM CONFIRMATION MODAL */}
+      {/* UNIFIED DESTRUCTIVE CONFIRMATION MODAL */}
       {confirmModal.isOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden transition-all text-left">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[250]">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-sm overflow-hidden text-left">
             <div className="bg-[#800000] text-white p-4 flex justify-between items-center font-bold">
               <h3 className="text-base font-bold text-white">
-                {confirmModal.type === "reject" ? "Reject Friend Request" : confirmModal.type === "cancel" ? "Cancel Friend Request" : "Delete User Entirely"}
+                {confirmModal.type === "reject" ? "Reject Friend Request" : confirmModal.type === "remove" ? "Remove Friend" : confirmModal.type === "cancel" ? "Cancel Friend Request" : "Delete User Confirmation"}
               </h3>
               <button
+                type="button"
                 onClick={() => setConfirmModal({ isOpen: false, type: null, relationId: null, targetName: null, targetUserId: null })}
-                className="text-red-100 hover:text-white text-lg leading-none cursor-pointer"
+                className="text-gray-300 hover:text-white text-lg leading-none cursor-pointer"
               >
                 ✕
               </button>
@@ -602,69 +529,33 @@ export default function MembersPage() {
             <div className="h-1 bg-[#660000]" />
 
             <div className="p-5 space-y-4">
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3.5 text-xs text-red-900 leading-relaxed">
+              <p className="text-xs text-gray-700 font-medium leading-relaxed">
                 {confirmModal.type === "reject" ? (
                   <>Are you sure you want to reject @<strong>{confirmModal.targetName}</strong>&apos;s friend request?</>
+                ) : confirmModal.type === "remove" ? (
+                  <>Are you sure you want to remove @<strong>{confirmModal.targetName}</strong> from your friends list?</>
                 ) : confirmModal.type === "cancel" ? (
                   <>Are you sure you want to cancel your friend request to @<strong>{confirmModal.targetName}</strong>?</>
                 ) : (
-                  <>Are you sure you want to completely delete @<strong>{confirmModal.targetName}</strong>? This will reset all profile, wall, and account data entirely while preserving transaction records.</>
+                  <>Are you sure you want to completely delete @<strong>{confirmModal.targetName}</strong>? This cannot be undone.</>
                 )}
-              </div>
+              </p>
 
               <div className="flex gap-2 pt-2">
-                {confirmModal.type === "reject" ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={executeModalAcceptFromReject}
-                      className="w-1/2 py-2.5 rounded text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow transition cursor-pointer"
-                    >
-                      Accept
-                    </button>
-                    <button
-                      type="button"
-                      onClick={executeConfirmedAction}
-                      className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#800000] hover:bg-[#660000] text-white shadow transition cursor-pointer"
-                    >
-                      Reject
-                    </button>
-                  </>
-                ) : confirmModal.type === "delete_user" ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmModal({ isOpen: false, type: null, relationId: null, targetName: null, targetUserId: null })}
-                      className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={executeDeleteUserFull}
-                      className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#800000] hover:bg-[#660000] text-white shadow transition cursor-pointer"
-                    >
-                      Confirm Delete
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmModal({ isOpen: false, type: null, relationId: null, targetName: null })}
-                      className="w-1/2 py-2.5 rounded text-sm font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
-                    >
-                      Back
-                    </button>
-                    <button
-                      type="button"
-                      onClick={executeConfirmedAction}
-                      className="w-1/2 py-2.5 rounded text-sm font-bold bg-[#800000] hover:bg-[#660000] text-white shadow transition cursor-pointer"
-                    >
-                      Confirm
-                    </button>
-                  </>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setConfirmModal({ isOpen: false, type: null, relationId: null, targetName: null, targetUserId: null })}
+                  className="w-1/2 py-2 rounded text-xs font-semibold border border-gray-300 hover:bg-gray-100 transition cursor-pointer text-gray-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmModal.type === "delete_user" ? executeDeleteUserFull : executeConfirmedAction}
+                  className="w-1/2 py-2 rounded text-xs font-bold bg-[#800000] hover:bg-[#660000] text-white shadow transition cursor-pointer"
+                >
+                  Confirm
+                </button>
               </div>
             </div>
           </div>

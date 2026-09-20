@@ -37,16 +37,13 @@ export default function StreamingPage() {
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [streamId, setStreamId] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<string>("Connecting...");
-
   const [selectedStreamer, setSelectedStreamer] = useState<string | null>(null);
   const [activeStreams, setActiveStreams] = useState<StreamRecord[]>([]);
-
   const [viewerCount, setViewerCount] = useState<number>(1);
   const [viewersList, setViewersList] = useState<Viewer[]>([]);
   const [showViewersModal, setShowViewersModal] = useState<boolean>(false);
   const [showDonateModal, setShowDonateModal] = useState<boolean>(false);
   const [tipAmount, setTipAmount] = useState<string>("5");
-
   const [chatInput, setChatInput] = useState<string>("");
   const [messages, setMessages] = useState<StreamChatMessage[]>([]);
 
@@ -56,7 +53,6 @@ export default function StreamingPage() {
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const pendingCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
 
-  // Load user details
   useEffect(() => {
     async function loadUser() {
       const { data: { session } } = await supabase.auth.getSession();
@@ -71,6 +67,7 @@ export default function StreamingPage() {
             .select("username, is_approved, photo_url, balance_cents")
             .eq("user_id", session.user.id)
             .single();
+
           if (profile) {
             setCurrentUsername(profile.username);
             setIsApproved(Boolean(profile.is_approved));
@@ -83,7 +80,6 @@ export default function StreamingPage() {
     loadUser();
   }, [supabase]);
 
-  // Fetch strictly active streams
   const fetchActiveStreams = useCallback(async () => {
     const { data, error } = await supabase
       .from("streams")
@@ -116,7 +112,6 @@ export default function StreamingPage() {
     fetchActiveStreams();
   }, [fetchActiveStreams]);
 
-  // Realtime subscription for lobby sync
   useEffect(() => {
     const channel = supabase
       .channel("streams-lobby-sync")
@@ -132,22 +127,28 @@ export default function StreamingPage() {
     };
   }, [supabase, fetchActiveStreams]);
 
-  // WebRTC P2P Signaling with TURN relay + ICE buffering + auto-reconnect
+  // Unload listener prevents abandoned live broadcasts
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (isStreaming && currentUsername) {
+        supabase.from("streams").update({ is_active: false }).eq("host_username", currentUsername).eq("is_active", true);
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      if (isStreaming && currentUsername) {
+        supabase.from("streams").update({ is_active: false }).eq("host_username", currentUsername).eq("is_active", true);
+      }
+    };
+  }, [isStreaming, currentUsername, supabase]);
+
+  // WebRTC P2P Signaling
   useEffect(() => {
     if (!selectedStreamer || !currentUsername || currentUsername === "Guest") return;
-
     const isHost = selectedStreamer === currentUsername && isStreaming;
 
-    // ------------------------------------------------------------------
-    // ICE configuration.
-    // TURN is REQUIRED for cross-network viewing (mobile data, school/office
-    // wifi, symmetric NAT). STUN alone only connects when a direct path exists,
-    // which is why some viewers worked and others got stuck "Reconnecting...".
-    // The openrelay entries below are a PUBLIC DEMO — fine for testing, but
-    // rate-limited and not reliable for production. Replace them with your own
-    // free credentials from https://www.metered.ca/tools/openrelay/ (50GB/mo
-    // free) or Cloudflare Calls TURN.
-    // ------------------------------------------------------------------
     const iceServers: RTCConfiguration = {
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
@@ -187,19 +188,16 @@ export default function StreamingPage() {
           try {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
           } catch (e) {
-            console.error("[v0] Buffered ICE error:", e);
+            console.error("Buffered ICE error:", e);
           }
         }
         pendingCandidatesRef.current.set(peerKey, []);
       }
     };
 
-    // Build (or rebuild) the viewer's peer connection and send an offer.
-    // Reused for the initial connect AND for automatic reconnection.
     const setupViewerConnection = async () => {
       if (isCleanedUp || isHost) return;
 
-      // Tear down any previous connection for this streamer first.
       const oldPc = peerConnectionsRef.current.get(selectedStreamer);
       if (oldPc) {
         oldPc.close();
@@ -210,13 +208,11 @@ export default function StreamingPage() {
       const pc = new RTCPeerConnection(iceServers);
       peerConnectionsRef.current.set(selectedStreamer, pc);
 
-      // Ensure we actually get media even before tracks are added.
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.addTransceiver("audio", { direction: "recvonly" });
 
       pc.onconnectionstatechange = () => {
         if (isCleanedUp) return;
-        console.log("[v0] Viewer connection state:", pc.connectionState);
         if (pc.connectionState === "connected") {
           reconnectAttempts = 0;
           setConnectionStatus("Live");
@@ -228,7 +224,6 @@ export default function StreamingPage() {
       };
 
       pc.ontrack = (event) => {
-        console.log("[v0] Viewer received remote track!", event.streams[0]);
         if (videoRef.current) {
           videoRef.current.srcObject = event.streams[0];
           videoRef.current.muted = false;
@@ -256,7 +251,7 @@ export default function StreamingPage() {
           payload: { type: "offer", sender: currentUsername, target: selectedStreamer, payload: pc.localDescription }
         });
       } catch (err) {
-        console.error("[v0] Failed to create offer:", err);
+        console.error("Failed to create offer:", err);
         scheduleReconnect();
       }
     };
@@ -268,7 +263,6 @@ export default function StreamingPage() {
         return;
       }
       reconnectAttempts += 1;
-      // Exponential backoff capped at 8s.
       const delay = Math.min(1000 * 2 ** (reconnectAttempts - 1), 8000);
       setConnectionStatus(`Reconnecting (${reconnectAttempts})...`);
       if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -280,21 +274,16 @@ export default function StreamingPage() {
     roomChannel
       .on("broadcast", { event: "webrtc-signal" }, async ({ payload }) => {
         if (payload.target !== currentUsername) return;
-
         const { type, sender, payload: signal } = payload;
-        console.log("[v0] Signal received:", type, "from:", sender);
 
         if (isHost) {
           let pc = peerConnectionsRef.current.get(sender);
-
           if (type === "offer") {
-            // Fresh viewer OR an ICE-restart re-offer from an existing viewer.
             if (!pc) {
               pc = new RTCPeerConnection(iceServers);
               peerConnectionsRef.current.set(sender, pc);
 
               pc.onconnectionstatechange = () => {
-                console.log(`[v0] Host -> Viewer (${sender}) state:`, pc?.connectionState);
                 if (pc?.connectionState === "connected") {
                   setConnectionStatus("Live");
                 }
@@ -323,10 +312,8 @@ export default function StreamingPage() {
 
             await pc.setRemoteDescription(new RTCSessionDescription(signal));
             await addBufferedCandidates(pc, sender);
-
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
-
             roomChannel.send({
               type: "broadcast",
               event: "webrtc-signal",
@@ -337,7 +324,7 @@ export default function StreamingPage() {
               try {
                 await pc.addIceCandidate(new RTCIceCandidate(signal));
               } catch (e) {
-                console.error("[v0] Host ICE error:", e);
+                console.error("Host ICE error:", e);
               }
             } else {
               const queue = pendingCandidatesRef.current.get(sender) || [];
@@ -350,7 +337,6 @@ export default function StreamingPage() {
           if (!pc) return;
 
           if (type === "answer") {
-            // Ignore stale answers if we've already progressed past negotiation.
             if (pc.signalingState === "stable") return;
             await pc.setRemoteDescription(new RTCSessionDescription(signal));
             await addBufferedCandidates(pc, selectedStreamer);
@@ -359,7 +345,7 @@ export default function StreamingPage() {
               try {
                 await pc.addIceCandidate(new RTCIceCandidate(signal));
               } catch (e) {
-                console.error("[v0] Viewer ICE error:", e);
+                console.error("Viewer ICE error:", e);
               }
             } else {
               const queue = pendingCandidatesRef.current.get(selectedStreamer) || [];
@@ -422,7 +408,6 @@ export default function StreamingPage() {
       try {
         enterFullScreen();
         await closeUserActiveStreams(currentUsername);
-
         await supabase.from("stream_messages").delete().neq("id", "00000000-0000-0000-0000-000000000000");
         setMessages([]);
 
@@ -493,6 +478,7 @@ export default function StreamingPage() {
       setStreamId(null);
     }
     await closeUserActiveStreams(currentUsername);
+
     exitFullScreen();
     setSelectedStreamer(null);
     fetchActiveStreams();
@@ -593,10 +579,8 @@ export default function StreamingPage() {
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim() || !currentUsername) return;
-
     const text = chatInput.trim();
     setChatInput("");
-
     await supabase.from("stream_messages").insert({
       username: currentUsername,
       message: text,
@@ -626,9 +610,6 @@ export default function StreamingPage() {
     alert(`Successfully donated $${amount.toFixed(2)} to @${selectedStreamer}!`);
   };
 
-  // ==========================================
-  // STATE 1: STREAM LOBBY GRID
-  // ==========================================
   if (!selectedStreamer) {
     return (
       <div className="max-w-4xl mx-auto space-y-4 px-2">
@@ -673,12 +654,10 @@ export default function StreamingPage() {
                     LIVE
                   </div>
                 </div>
-
                 <h3 className="text-xs font-bold text-gray-900 group-hover:text-[#b8860b] transition">
                   @{stream.host_username} {stream.host_username === "KingDavid" ? "👑" : ""}
                 </h3>
                 <p className="text-[10px] text-gray-400 mt-0.5">{stream.title}</p>
-
                 <button
                   type="button"
                   className="mt-3 w-full py-2 rounded-lg text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow-xs transition cursor-pointer uppercase tracking-wider"
@@ -693,14 +672,9 @@ export default function StreamingPage() {
     );
   }
 
-  // ==========================================
-  // STATE 2: ACTIVE STREAM ROOM VIEW
-  // ==========================================
   return (
     <div className="fixed inset-0 z-[99999] bg-black w-screen h-screen flex flex-col items-center justify-center overflow-hidden p-0 m-0">
-
       <div className="relative bg-black w-full h-full flex flex-col justify-end overflow-hidden">
-
         <video
           ref={videoRef}
           autoPlay
@@ -715,7 +689,6 @@ export default function StreamingPage() {
           </span>
         </div>
 
-        {/* Top-Left Controls */}
         <div className="absolute top-4 left-4 flex items-center gap-1.5 z-30">
           {isApproved ? (
             <button
@@ -745,7 +718,6 @@ export default function StreamingPage() {
           </button>
         </div>
 
-        {/* Top-Right Controls */}
         <div className="absolute top-4 right-4 z-30 flex items-center gap-2">
           {balanceCents > 0 && selectedStreamer !== currentUsername && (
             <button
@@ -757,9 +729,11 @@ export default function StreamingPage() {
               $
             </button>
           )}
+
           <div className="flex items-center gap-1 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-full border border-zinc-800 shadow-md">
             <span className="text-[10px] font-bold text-white font-mono">@{selectedStreamer} {selectedStreamer === "KingDavid" ? "👑" : ""}</span>
           </div>
+
           <button
             type="button"
             onClick={handleExitStream}
@@ -770,7 +744,6 @@ export default function StreamingPage() {
           </button>
         </div>
 
-        {/* Bottom Overlay: Chat Feed & Input */}
         <div className="absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/95 via-zinc-950/60 to-transparent pt-12 pb-6 px-4 flex flex-col justify-end max-h-[50%]">
           <div className="overflow-y-auto space-y-1.5 mb-2 max-h-40 pr-1 text-xs [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-600 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
             {messages.length === 0 ? (
