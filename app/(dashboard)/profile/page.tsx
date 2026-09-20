@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, Suspense } from "react";
 import { createBrowserClient } from "@supabase/ssr";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { compressImageFile, extractStoragePath } from "@/lib/imageUtils";
 
 interface LikeRecord {
@@ -71,15 +71,13 @@ const REACTION_CONFIG: { type: string; emoji: string; label: string }[] = [
 
 function ProfileContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const profileParam = searchParams.get("username");
+
   const supabase = createBrowserClient(
     "https://bucijzexpxsuxvsnwwyu.supabase.co",
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1Y2lqemV4cHhzdXh2c253d3l1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5MzM2NjAsImV4cCI6MjEwNDUwOTY2MH0.Gr34yXf6UDlZq54nEKZAvaUCnfXla26LoVSH3YY5u1M"
   );
 
   const [profile, setProfile] = useState<any>(null);
-  const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
   const [currentUsername, setCurrentUsername] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
@@ -170,8 +168,8 @@ function ProfileContent() {
 
         const formatted: Post[] = postsData.map((post) => {
           const postLikes: LikeRecord[] = likesData?.filter((l) => l.post_id === post.id) || [];
-          const rawComments: CommentRecord[] = commentsData?.filter((c) => c.post_id === post.id) || [];
-          const postComments = rawComments.map((comment) => {
+          const rawComments = commentsData?.filter((c) => c.post_id === post.id) || [];
+          const postComments: CommentRecord[] = rawComments.map((comment) => {
             const commentLikes = commentLikesData?.filter((cl) => cl.comment_id === comment.id) || [];
             const userCommentLike = commentLikes.find(
               (cl) => cl.username.toLowerCase() === activeUser.toLowerCase()
@@ -250,12 +248,13 @@ function ProfileContent() {
         return;
       }
 
+      let activeProfile: any = null;
       let loggedInUsername = "";
       const email = session.user.email || "";
 
       if (email.toLowerCase() === "lambertdavid1992@gmail.com") {
         loggedInUsername = "KingDavid";
-        setCurrentUserProfile({ username: "KingDavid", is_approved: true });
+        activeProfile = { username: "KingDavid", is_approved: true };
       } else {
         const { data: userProf } = await supabase
           .from("profiles")
@@ -265,32 +264,23 @@ function ProfileContent() {
 
         if (userProf) {
           loggedInUsername = userProf.username;
-          setCurrentUserProfile(userProf);
+          activeProfile = userProf;
         }
       }
 
       setCurrentUsername(loggedInUsername);
-      const targetProfileUser = profileParam ? profileParam.trim() : loggedInUsername;
+      setProfile(activeProfile);
 
-      const { data: profileData } = await supabase
-        .from("profiles")
-        .select("*")
-        .ilike("username", targetProfileUser)
-        .single();
-
-      if (profileData) {
-        setProfile(profileData);
-        await fetchPosts(profileData.username, loggedInUsername);
-        await fetchGallery(profileData.username, loggedInUsername);
-      } else {
-        setProfile(null);
+      if (activeProfile?.username) {
+        await fetchPosts(activeProfile.username, loggedInUsername);
+        await fetchGallery(activeProfile.username, loggedInUsername);
       }
     } catch (err) {
       console.error("Failed to load profile data", err);
     } finally {
       setLoading(false);
     }
-  }, [router, supabase, profileParam, fetchPosts, fetchGallery]);
+  }, [router, supabase, fetchPosts, fetchGallery]);
 
   useEffect(() => {
     loadProfileAndData();
@@ -300,7 +290,7 @@ function ProfileContent() {
     if (!profile?.username || !currentUsername) return;
 
     const channel = supabase
-      .channel(`profile-wall-and-gallery-${profile.username}`)
+      .channel(`my-profile-wall-gallery-${profile.username}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "posts" },
@@ -360,18 +350,14 @@ function ProfileContent() {
   }, [profile?.username, currentUsername, supabase, fetchPosts, fetchGallery]);
 
   const isApproved = Boolean(profile?.is_approved);
-  const isOwnProfile = currentUsername.toLowerCase() === profile?.username?.toLowerCase();
   const isFemale = profile?.gender?.toLowerCase() === "female";
-  const isViewerApproved = Boolean(currentUserProfile?.is_approved);
-  const hasOwnerPosted = posts.some((p) => p.username.toLowerCase() === profile.username.toLowerCase());
-  const canPost = isOwnProfile || hasOwnerPosted;
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     const file = files[0];
 
-    if (!isViewerApproved) {
+    if (!isApproved) {
       setWarningMessage("Your account is pending approval by King David. Updating profile picture is currently locked.");
       setWarningModalOpen(true);
       e.target.value = "";
@@ -432,13 +418,7 @@ function ProfileContent() {
     if (!files || files.length === 0) return;
     const file = files[0];
 
-    if (!isOwnProfile) {
-      alert("You can only upload pictures to your own gallery.");
-      e.target.value = "";
-      return;
-    }
-
-    if (!isViewerApproved) {
+    if (!isApproved) {
       setWarningMessage("Your account is pending approval by King David. Uploading images is currently locked.");
       setWarningModalOpen(true);
       e.target.value = "";
@@ -538,7 +518,7 @@ function ProfileContent() {
   const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!isViewerApproved) {
+    if (!isApproved) {
       setWarningMessage("Your account is pending approval by King David. Posting thoughts is currently locked.");
       setWarningModalOpen(true);
       return;
@@ -619,7 +599,7 @@ function ProfileContent() {
   const handleAddComment = async (postId: string, e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!isViewerApproved) {
+    if (!isApproved) {
       setWarningMessage("Your account is pending approval by King David. Replying to thoughts is currently locked.");
       setWarningModalOpen(true);
       return;
@@ -663,7 +643,7 @@ function ProfileContent() {
   };
 
   const handleSelectReaction = async (postId: string, reactionType: string, existingReaction: string | null) => {
-    if (!isViewerApproved) {
+    if (!isApproved) {
       setWarningMessage("Your account is pending approval by King David. Reacting to posts is currently locked.");
       setWarningModalOpen(true);
       return;
@@ -693,7 +673,7 @@ function ProfileContent() {
     reactionType: string,
     existingReaction: string | null
   ) => {
-    if (!isViewerApproved) {
+    if (!isApproved) {
       setWarningMessage("Your account is pending approval by King David. Reacting to comments is currently locked.");
       setWarningModalOpen(true);
       return;
@@ -723,7 +703,7 @@ function ProfileContent() {
     reactionType: string,
     existingReaction: string | null
   ) => {
-    if (!isViewerApproved) {
+    if (!isApproved) {
       setWarningMessage("Your account is pending approval by King David. Reacting to gallery photos is currently locked.");
       setWarningModalOpen(true);
       return;
@@ -768,13 +748,13 @@ function ProfileContent() {
   };
 
   if (loading) {
-    return <div className="py-20 text-center text-xs font-semibold text-gray-500">Loading User Profile...</div>;
+    return <div className="py-20 text-center text-xs font-semibold text-gray-500">Loading Profile...</div>;
   }
 
   if (!profile) {
     return (
       <div className="py-20 text-center text-xs font-semibold text-red-500">
-        Profile not found.
+        Profile details could not be loaded.
       </div>
     );
   }
@@ -790,7 +770,7 @@ function ProfileContent() {
             </div>
             <div>
               <h3 className="text-xs font-bold text-amber-900 uppercase tracking-wide">Account Pending Approval</h3>
-              <p className="text-[11px] text-amber-700">This profile is currently under review.</p>
+              <p className="text-[11px] text-amber-700">Your profile is currently under review by King David.</p>
             </div>
           </div>
         </div>
@@ -805,22 +785,20 @@ function ProfileContent() {
             ) : (
               <span className="text-xs text-gray-400">No Image</span>
             )}
-            {isOwnProfile && (
-              <label
-                className={`absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition flex flex-col items-center justify-center text-white text-[10px] font-bold cursor-pointer p-1 text-center ${
-                  uploadingAvatar ? "opacity-100" : ""
-                }`}
-              >
-                <span>{uploadingAvatar ? "Updating..." : "📷 Change Photo"}</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleAvatarUpload}
-                  disabled={uploadingAvatar}
-                  className="hidden"
-                />
-              </label>
-            )}
+            <label
+              className={`absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition flex flex-col items-center justify-center text-white text-[10px] font-bold cursor-pointer p-1 text-center ${
+                uploadingAvatar ? "opacity-100" : ""
+              }`}
+            >
+              <span>{uploadingAvatar ? "Updating..." : "📷 Change Photo"}</span>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleAvatarUpload}
+                disabled={uploadingAvatar}
+                className="hidden"
+              />
+            </label>
           </div>
           <div className="space-y-1.5 text-center sm:text-left flex-1">
             <div>
@@ -850,30 +828,28 @@ function ProfileContent() {
       {/* Gallery Section */}
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden p-6 space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-bold text-gray-900">@{profile?.username}&apos;s Gallery</h2>
-          {isOwnProfile && (
-            <label
-              className={`px-4 py-1.5 rounded-lg text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow-sm transition cursor-pointer flex items-center gap-2 ${
-                uploadingImage ? "opacity-50 cursor-not-allowed" : ""
-              }`}
-            >
-              <span>{uploadingImage ? "Uploading..." : "+ Upload Image"}</span>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleImageUpload}
-                disabled={uploadingImage}
-                className="hidden"
-              />
-            </label>
-          )}
+          <h2 className="text-sm font-bold text-gray-900">My Gallery</h2>
+          <label
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow-sm transition cursor-pointer flex items-center gap-2 ${
+              uploadingImage ? "opacity-50 cursor-not-allowed" : ""
+            }`}
+          >
+            <span>{uploadingImage ? "Uploading..." : "+ Upload Image"}</span>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleImageUpload}
+              disabled={uploadingImage}
+              className="hidden"
+            />
+          </label>
         </div>
 
         {/* Gallery Grid */}
         <div>
           {galleryImages.length === 0 ? (
             <div className="py-8 text-center text-xs text-gray-400 font-medium italic border border-dashed border-gray-200 rounded-lg">
-              No photos uploaded to this profile gallery yet (Max 50 images per person, compressed automatically).
+              No photos uploaded to your gallery yet (Max 50 images, compressed automatically).
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
@@ -892,38 +868,20 @@ function ProfileContent() {
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white font-bold text-xs">
                       🔍 Click to Expand
                     </div>
-                    {/* OVERLAY AT THE VERY BOTTOM OF THE IMAGE ONLY ON OWN PROFILE */}
-                    {isOwnProfile && (
-                      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 via-black/50 to-transparent p-2.5 flex items-center justify-between text-[11px] text-white">
-                        <span className="font-mono opacity-90 truncate max-w-[120px]">By @{img.username}</span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            confirmDeleteImage(img);
-                          }}
-                          className="bg-rose-600/90 hover:bg-rose-700 text-white px-2 py-0.5 rounded text-[10px] font-bold shadow transition cursor-pointer shrink-0"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    )}
+                    <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 via-black/50 to-transparent p-2.5 flex items-center justify-between text-[11px] text-white">
+                      <span className="font-mono opacity-90 truncate max-w-[120px]">By @{img.username}</span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          confirmDeleteImage(img);
+                        }}
+                        className="bg-rose-600/90 hover:bg-rose-700 text-white px-2 py-0.5 rounded text-[10px] font-bold shadow transition cursor-pointer shrink-0"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
-                  {/* GALLERY CARD FOOTER */}
                   <div className="p-3 space-y-2.5">
-                    {!isOwnProfile && (
-                      <div className="flex items-center justify-between text-[11px] text-gray-500 font-mono">
-                        <span>By @{img.username}</span>
-                        {(currentUsername.toLowerCase() === "kingdavid" ||
-                          img.username.toLowerCase() === currentUsername.toLowerCase()) && (
-                          <button
-                            onClick={() => confirmDeleteImage(img)}
-                            className="text-rose-600 hover:text-rose-700 font-bold cursor-pointer"
-                          >
-                            Delete
-                          </button>
-                        )}
-                      </div>
-                    )}
                     {/* Gallery Reaction Bar */}
                     <div className="bg-white rounded-full px-3 py-1.5 flex items-center justify-between shadow-2xs border border-gray-200">
                       <div className="flex items-center gap-3">
@@ -1002,57 +960,51 @@ function ProfileContent() {
 
       {/* Timeline Section */}
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden p-6 space-y-6">
-        <h2 className="text-sm font-bold text-gray-900">@{profile?.username}&apos;s thoughts</h2>
+        <h2 className="text-sm font-bold text-gray-900">My thoughts</h2>
 
         {/* Post Composer Box */}
-        {canPost && (
-          <form onSubmit={handleCreatePost} className="space-y-3 bg-gray-50 p-4 rounded-xl border border-gray-200">
-            <textarea
-              rows={3}
-              value={newPostContent}
-              onChange={(e) => setNewPostContent(e.target.value)}
-              placeholder={
-                isOwnProfile
-                  ? `What's on your mind, @${currentUsername}?`
-                  : `Write something on @${profile?.username}'s wall...`
-              }
-              className="w-full p-3 text-xs text-gray-900 bg-white border border-gray-300 rounded-lg focus:outline-none focus:border-[#e7b833] resize-none"
-            />
-            {newPostImagePreview && (
-              <div className="relative w-28 h-28 rounded-lg overflow-hidden border border-gray-300 bg-black">
-                <img src={newPostImagePreview} alt="Preview" className="w-full h-full object-cover" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewPostImageFile(null);
-                    setNewPostImagePreview(null);
-                  }}
-                  className="absolute top-1 right-1 bg-black/70 text-white text-[10px] px-1.5 py-0.5 rounded font-bold cursor-pointer hover:bg-rose-600"
-                >
-                  ✕
-                </button>
-              </div>
-            )}
-            <div className="flex items-center justify-between pt-1">
-              <label className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 shadow-2xs transition cursor-pointer flex items-center gap-1.5">
-                <span>📷 Attach Image (Max 10MB)</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handlePostImageSelect}
-                  className="hidden"
-                />
-              </label>
+        <form onSubmit={handleCreatePost} className="space-y-3 bg-gray-50 p-4 rounded-xl border border-gray-200">
+          <textarea
+            rows={3}
+            value={newPostContent}
+            onChange={(e) => setNewPostContent(e.target.value)}
+            placeholder={`What's on your mind, @${currentUsername}?`}
+            className="w-full p-3 text-xs text-gray-900 bg-white border border-gray-300 rounded-lg focus:outline-none focus:border-[#e7b833] resize-none"
+          />
+          {newPostImagePreview && (
+            <div className="relative w-28 h-28 rounded-lg overflow-hidden border border-gray-300 bg-black">
+              <img src={newPostImagePreview} alt="Preview" className="w-full h-full object-cover" />
               <button
-                type="submit"
-                disabled={posting || (!newPostContent.trim() && !newPostImageFile)}
-                className="px-5 py-2 rounded-lg text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow-sm transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                type="button"
+                onClick={() => {
+                  setNewPostImageFile(null);
+                  setNewPostImagePreview(null);
+                }}
+                className="absolute top-1 right-1 bg-black/70 text-white text-[10px] px-1.5 py-0.5 rounded font-bold cursor-pointer hover:bg-rose-600"
               >
-                {posting ? "Posting..." : "Post thoughts"}
+                ✕
               </button>
             </div>
-          </form>
-        )}
+          )}
+          <div className="flex items-center justify-between pt-1">
+            <label className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 shadow-2xs transition cursor-pointer flex items-center gap-1.5">
+              <span>📷 Attach Image (Max 10MB)</span>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handlePostImageSelect}
+                className="hidden"
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={posting || (!newPostContent.trim() && !newPostImageFile)}
+              className="px-5 py-2 rounded-lg text-xs font-bold bg-[#e7b833] hover:bg-[#d4a52b] text-gray-900 shadow-sm transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {posting ? "Posting..." : "Post thoughts"}
+            </button>
+          </div>
+        </form>
 
         {/* Posts Feed */}
         <div className="space-y-4">
@@ -1076,16 +1028,13 @@ function ProfileContent() {
                         <span className="text-[10px] text-gray-400 font-mono">{formatTimestamp(post.created_at)}</span>
                       </div>
                     </div>
-                    {(currentUsername.toLowerCase() === "kingdavid" ||
-                      post.username.toLowerCase() === currentUsername.toLowerCase()) && (
-                      <button
-                        onClick={() => confirmDeletePost(post)}
-                        className="text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-2.5 py-1 rounded transition cursor-pointer shadow-2xs"
-                        title="Delete thought"
-                      >
-                        Delete
-                      </button>
-                    )}
+                    <button
+                      onClick={() => confirmDeletePost(post)}
+                      className="text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-2.5 py-1 rounded transition cursor-pointer shadow-2xs"
+                      title="Delete thought"
+                    >
+                      Delete
+                    </button>
                   </div>
                   {post.content && (
                     <p className="text-xs text-gray-800 whitespace-pre-wrap leading-relaxed px-1">
@@ -1150,16 +1099,13 @@ function ProfileContent() {
                                   {formatTimestamp(comment.created_at)}
                                 </span>
                               </div>
-                              {(currentUsername.toLowerCase() === "kingdavid" ||
-                                comment.username.toLowerCase() === currentUsername.toLowerCase()) && (
-                                <button
-                                  onClick={() => confirmDeleteComment(comment.id)}
-                                  className="text-[10px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-2 py-0.5 rounded transition cursor-pointer shrink-0 ml-2"
-                                  title="Delete comment"
-                                >
-                                  Delete
-                                </button>
-                              )}
+                              <button
+                                onClick={() => confirmDeleteComment(comment.id)}
+                                className="text-[10px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-2 py-0.5 rounded transition cursor-pointer shrink-0 ml-2"
+                                title="Delete comment"
+                              >
+                                Delete
+                              </button>
                             </div>
                             {/* Comment Reaction Bar */}
                             <div className="flex items-center justify-between text-[11px] pt-1 border-t border-gray-200/60">

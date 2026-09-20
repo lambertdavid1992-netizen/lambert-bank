@@ -172,8 +172,8 @@ function UserProfileContent() {
 
         const formatted: Post[] = postsData.map((post) => {
           const postLikes: LikeRecord[] = likesData?.filter((l) => l.post_id === post.id) || [];
-          const rawComments: CommentRecord[] = commentsData?.filter((c) => c.post_id === post.id) || [];
-          const postComments = rawComments.map((comment) => {
+          const rawComments = commentsData?.filter((c) => c.post_id === post.id) || [];
+          const postComments: CommentRecord[] = rawComments.map((comment) => {
             const commentLikes = commentLikesData?.filter((cl) => cl.comment_id === comment.id) || [];
             const userCommentLike = commentLikes.find(
               (cl) => cl.username.toLowerCase() === activeUser.toLowerCase()
@@ -289,7 +289,7 @@ function UserProfileContent() {
       }
     } catch (err) {
       console.error("Failed to load profile data", err);
-    } finally {
+    } fontally {
       setLoading(false);
     }
   }, [router, supabase, targetUsernameFromRoute, fetchPosts, fetchGallery]);
@@ -365,7 +365,7 @@ function UserProfileContent() {
   const isOwnProfile = currentUsername.toLowerCase() === profile?.username?.toLowerCase();
   const isFemale = profile?.gender?.toLowerCase() === "female";
   const isViewerApproved = Boolean(currentUserProfile?.is_approved);
-  const hasOwnerPosted = posts.some((p) => p.username.toLowerCase() === profile.username.toLowerCase());
+  const hasOwnerPosted = posts.some((p) => p.username.toLowerCase() === profile?.username?.toLowerCase());
   const canPost = isOwnProfile || hasOwnerPosted;
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
