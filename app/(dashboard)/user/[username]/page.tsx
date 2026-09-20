@@ -289,7 +289,7 @@ function UserProfileContent() {
       }
     } catch (err) {
       console.error("Failed to load profile data", err);
-    } fontally {
+    } finally {
       setLoading(false);
     }
   }, [router, supabase, targetUsernameFromRoute, fetchPosts, fetchGallery]);
